@@ -22,14 +22,5 @@ if ! kill -0 "$PID" 2>/dev/null; then
 fi
 
 kill "$PID"
-for _ in {1..20}; do
-  if ! kill -0 "$PID" 2>/dev/null; then
-    rm -f "$PID_FILE"
-    echo "Stopped OMR API process $PID."
-    exit 0
-  fi
-  sleep 0.25
-done
-
-echo "OMR API process $PID did not stop in time." >&2
-exit 1
+rm -f "$PID_FILE"
+echo "Sent the stop signal to OMR API process $PID."

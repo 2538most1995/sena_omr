@@ -172,6 +172,7 @@ class SubjectEndpointTests(unittest.TestCase):
         )
         self.assertEqual(calls[0][2]['params']['term'], '1/2569')
         self.assertEqual(calls[0][2]['headers']['Authorization'], 'Bearer sdl_student_secret')
+        self.assertEqual(calls[0][2]['headers']['X-Student-Data-Token'], 'sdl_student_secret')
 
     def test_group_roster_and_score_proxy_use_configurable_api_paths(self):
         calls = []

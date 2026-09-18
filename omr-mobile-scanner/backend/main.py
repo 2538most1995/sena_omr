@@ -642,7 +642,13 @@ async def _request_sdl_json(
                 url,
                 params=params or {},
                 json=json,
-                headers={'Accept': 'application/json', 'Authorization': f'Bearer {token}'},
+                headers={
+                    'Accept': 'application/json',
+                    'Authorization': f'Bearer {token}',
+                    # Plesk/shared-hosting proxies can strip Authorization before
+                    # PHP-FPM. SDL_school accepts this backend-only fallback.
+                    'X-Student-Data-Token': token,
+                },
             )
     except httpx.TimeoutException as exc:
         raise HTTPException(status_code=504, detail='SDL_school request timed out') from exc
