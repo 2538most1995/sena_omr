@@ -16,6 +16,7 @@ import main  # noqa: E402
 from main import (  # noqa: E402
     _normalise_groups,
     _normalise_students,
+    _normalise_subject_roster,
     _normalise_subjects,
     _paper_student_code,
     _paper_subject_code,
@@ -60,13 +61,69 @@ class SubjectNormalisationTests(unittest.TestCase):
     def test_normalises_groups_and_students_from_nested_envelopes(self):
         self.assertEqual(_normalise_groups({'data': {'class_groups': [
             {'class_group_id': 7, 'class_group_code': 'ม.1/1', 'class_group_name': 'ห้อง 1'},
-        ]}}), [{'id': '7', 'code': 'ม.1/1', 'name': 'ห้อง 1'}])
+        ]}}), [{'id': '7', 'code': 'ม.1/1', 'name': 'ห้อง 1', 'student_count': None}])
         self.assertEqual(_normalise_students({'data': {'members': [
             {'student': {'student_code': '68001', 'first_name': 'สมชาย', 'last_name': 'ใจดี'}},
         ]}}), [{'code': '68001', 'name': 'สมชาย ใจดี'}])
+        self.assertEqual(_normalise_subject_roster({'data': [
+            {
+                'code': '12141200006800000001', 'full_name': 'เด็กหญิงหนึ่ง',
+                'group_id': 'g1', 'group_code': '1/1', 'group_name': 'ห้อง 1',
+            },
+        ]}), [{
+            'student_code': '6800000001', 'student_name': 'เด็กหญิงหนึ่ง',
+            'group_id': 'g1', 'group_code': '1/1', 'group_name': 'ห้อง 1',
+        }])
 
 
 class SubjectEndpointTests(unittest.TestCase):
+    def test_automatic_group_lookup_and_report_use_sdl_api(self):
+        async def fetch(path, params):
+            if path.endswith('/subjects/TH101/students'):
+                return {'data': [
+                    {
+                        'code': '12141200006800000001', 'full_name': 'เด็กหญิงหนึ่ง',
+                        'group_id': 'g1', 'group_code': '1/1', 'group_name': 'ห้อง 1',
+                    },
+                    {
+                        'code': '6800000002', 'full_name': 'เด็กชายสอง',
+                        'group_id': 'g1', 'group_code': '1/1', 'group_name': 'ห้อง 1',
+                    },
+                    {
+                        'code': '6800000003', 'full_name': 'เด็กหญิงสาม',
+                        'group_id': 'g2', 'group_code': '1/2', 'group_name': 'ห้อง 2',
+                    },
+                ]}
+            raise AssertionError(path)
+
+        scores = {
+            ('6800000001', 'g1'): {
+                'score': 42.0, 'max_score': 50.0,
+                'checked_at': '2026-09-17T10:00:00', 'updated_at': None,
+            },
+        }
+        client = TestClient(main.app)
+        with patch.object(main, '_sdl_api_configured', return_value=True), \
+                patch.object(main, '_fetch_sdl_json', side_effect=fetch) as api, \
+                patch.object(main, '_local_scores', return_value=scores):
+            lookup = client.get(
+                '/api/subjects/TH101/students/6800000001/class-group',
+                params={'term': '1/2569'},
+            )
+            report = client.get(
+                '/api/reports/students',
+                params={'subject_code': 'TH101', 'term': '1/2569'},
+            )
+
+        self.assertEqual(lookup.status_code, 200)
+        self.assertEqual(lookup.json()['source'], 'sdl_api')
+        self.assertEqual(lookup.json()['group']['id'], 'g1')
+        self.assertEqual(lookup.json()['student']['code'], '6800000001')
+        self.assertEqual(report.status_code, 200)
+        self.assertEqual(report.json()['source'], 'sdl_api')
+        self.assertEqual(report.json()['summary'], {'total': 3, 'checked': 1, 'pending': 2, 'groups': 2})
+        self.assertEqual(api.call_count, 2)
+
     def test_automatic_group_lookup_and_report_summary(self):
         rows = [
             {

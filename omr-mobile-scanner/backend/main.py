@@ -246,6 +246,7 @@ def _normalise_groups(payload: Any) -> list[dict[str, Any]]:
             'id': group_id,
             'code': str(code if code is not None else group_id).strip(),
             'name': str(name if name is not None else code or group_id).strip(),
+            'student_count': row.get('student_count'),
         })
     return groups
 
@@ -278,6 +279,57 @@ def _normalise_students(payload: Any) -> list[dict[str, Any]]:
             full_name = ' '.join(str(value).strip() for value in (first_name, last_name) if value)
         students.append({'code': code, 'name': str(full_name or code).strip()})
     return students
+
+
+def _normalise_subject_roster(payload: Any) -> list[dict[str, Any]]:
+    """Normalise a subject-wide roster that includes each student's group."""
+    rows = _payload_rows(payload, ('students', 'members', 'enrollments', 'items', 'results'))
+    roster: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        student = row.get('student') if isinstance(row.get('student'), dict) else row
+        group = row.get('group') if isinstance(row.get('group'), dict) else row
+        code = _first_value(student, (
+            'student_code', 'candidate_id', 'student_id', 'code', 'username',
+            'studentCode', 'candidateId', 'studentId',
+        ))
+        group_id = _first_value(group, (
+            'group_id', 'class_group_id', 'section_id', 'groupId',
+            'classGroupId', 'sectionId', 'id', 'group_code', 'class_group_code',
+        ))
+        if code is None or group_id is None:
+            continue
+        code = _paper_student_code(code)
+        group_id = str(group_id).strip()
+        if not code or not group_id or (code, group_id) in seen:
+            continue
+        seen.add((code, group_id))
+        full_name = _first_value(student, (
+            'full_name', 'student_name', 'display_name', 'name',
+            'fullName', 'studentName', 'displayName',
+        ))
+        if full_name is None:
+            first_name = _first_value(student, ('first_name', 'firstname', 'firstName', 'name_th'))
+            last_name = _first_value(student, ('last_name', 'lastname', 'lastName', 'surname'))
+            full_name = ' '.join(str(value).strip() for value in (first_name, last_name) if value)
+        group_code = _first_value(group, (
+            'group_code', 'class_group_code', 'section_code', 'groupCode',
+            'classGroupCode', 'sectionCode', 'code',
+        ))
+        group_name = _first_value(group, (
+            'group_name', 'class_group_name', 'section_name', 'groupName',
+            'classGroupName', 'sectionName', 'name', 'title',
+        ))
+        roster.append({
+            'student_code': code,
+            'student_name': str(full_name or code).strip(),
+            'group_id': group_id,
+            'group_code': str(group_code or group_id).strip(),
+            'group_name': str(group_name or group_code or group_id).strip(),
+        })
+    return roster
 
 
 def _sdl_api_configured() -> bool:
@@ -568,6 +620,41 @@ def _mysql_subject_roster(
     return sorted(result, key=lambda item: (item['group_name'], item['student_code']))
 
 
+async def _api_subject_roster(
+    subject_code: str,
+    term: str,
+    *,
+    student_code: str | None = None,
+) -> list[dict[str, Any]]:
+    """Build a subject roster from the read-only SDL integration API."""
+    roster_path = _configured_path(
+        'SDL_SCHOOL_SUBJECT_STUDENTS_PATH',
+        '/api/v1/integrations/student-data/subjects/{subject_code}/students',
+        subject_code=subject_code,
+    )
+    payload = await _fetch_sdl_json(roster_path, {'term': term})
+    api_rows = _normalise_subject_roster(payload)
+    target_code = _paper_student_code(student_code) if student_code else None
+    scores = _local_scores(subject_code, term)
+    roster: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in api_rows:
+        code = row['student_code']
+        group_id = row['group_id']
+        if target_code and code != target_code:
+            continue
+        key = (code, group_id)
+        score = scores.get(key)
+        roster[key] = {
+            **row,
+            'subject_code': subject_code,
+            'checked': score is not None,
+            'score': score.get('score') if score else None,
+            'max_score': score.get('max_score') if score else None,
+            'checked_at': (score.get('checked_at') or score.get('updated_at')) if score else None,
+        }
+    return sorted(roster.values(), key=lambda item: (item['group_name'], item['student_code']))
+
+
 def _store_local_score(payload: dict[str, Any]) -> None:
     score_db = BASE / '.run' / 'omr_scores.sqlite3'
     score_db.parent.mkdir(parents=True, exist_ok=True)
@@ -798,9 +885,14 @@ async def subject_student_class_group(
     term: str = Query('1/2569', pattern=r'^\d{1,2}/\d{4}$'),
 ):
     """Resolve a student's class group from the selected subject and current term."""
-    if not _sdl_mysql_configured():
-        raise HTTPException(status_code=503, detail='Automatic class-group lookup requires the SDL_school database')
-    rows = _mysql_subject_roster(subject_code, term, student_code=student_code)
+    if _sdl_api_configured():
+        rows = await _api_subject_roster(subject_code, term, student_code=student_code)
+        source = 'sdl_api'
+    elif _sdl_mysql_configured():
+        rows = _mysql_subject_roster(subject_code, term, student_code=student_code)
+        source = 'sdl_mysql'
+    else:
+        raise HTTPException(status_code=503, detail='SDL_school data source is not configured')
     if not rows:
         raise HTTPException(status_code=404, detail='Student is not registered for this subject')
     row = rows[0]
@@ -810,7 +902,7 @@ async def subject_student_class_group(
         'subject_code': subject_code,
         'term': term,
         'matches': len(rows),
-        'source': 'sdl_mysql',
+        'source': source,
     }
 
 
@@ -820,9 +912,14 @@ async def student_check_report(
     term: str = Query('1/2569', pattern=r'^\d{1,2}/\d{4}$'),
 ):
     """Return the full subject roster with checked/pending status for the dashboard."""
-    if not _sdl_mysql_configured():
-        raise HTTPException(status_code=503, detail='The report dashboard requires the SDL_school database')
-    rows = _mysql_subject_roster(subject_code, term)
+    if _sdl_api_configured():
+        rows = await _api_subject_roster(subject_code, term)
+        source = 'sdl_api'
+    elif _sdl_mysql_configured():
+        rows = _mysql_subject_roster(subject_code, term)
+        source = 'sdl_mysql'
+    else:
+        raise HTTPException(status_code=503, detail='SDL_school data source is not configured')
     checked = sum(1 for row in rows if row['checked'])
     return {
         'subject_code': subject_code,
@@ -834,7 +931,7 @@ async def student_check_report(
             'pending': len(rows) - checked,
             'groups': len({row['group_id'] for row in rows}),
         },
-        'source': 'sdl_mysql',
+        'source': source,
     }
 
 

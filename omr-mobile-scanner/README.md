@@ -74,9 +74,8 @@ Log ของ FastAPI อยู่ที่ `.run/uvicorn.log` ส่วน Apac
 
 ### ตั้งค่า SDL_school
 
-สำหรับชุด MAMP นี้ backend จะอ่านข้อมูลจาก import batch ล่าสุดที่สำเร็จในฐานข้อมูล
-`sena_school_db` โดยตรง เพราะ Student Data API ของ SDL_school เป็น API แบบอ่านอย่างเดียว
-และไม่มี endpoint กลุ่มเรียน/รับคะแนนตามที่หน้า OMR ต้องใช้ ตั้งค่าการเชื่อมต่อดังนี้:
+บน production ให้ backend อ่านรายวิชา กลุ่มเรียน และรายชื่อผ่าน Student Data API
+ของ SDL_school โดยตรง ส่วน MAMP สามารถใช้ฐานข้อมูล import batch สำหรับพัฒนาในเครื่องได้:
 
 ```bash
 cp .env.example .env
