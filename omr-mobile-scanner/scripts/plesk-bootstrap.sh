@@ -71,6 +71,7 @@ ln -sf /usr/lib/libc.so.6 "$RUNTIME_LIBS_DIR/librt.so.1"
 ln -sf /usr/lib/libc.so.6 "$RUNTIME_LIBS_DIR/libutil.so.1"
 export LD_LIBRARY_PATH="$RUNTIME_LIBS_DIR:/usr/lib:/usr/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export UV_PYTHON_INSTALL_DIR="$PYTHON_DIR"
+cd "$PROJECT_DIR"
 
 if ! "$VENV_DIR/bin/python" -c 'import sys; raise SystemExit(0 if sys.platform.startswith("linux") else 1)' \
     >/dev/null 2>&1; then
