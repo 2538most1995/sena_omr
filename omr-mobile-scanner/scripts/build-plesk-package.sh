@@ -74,6 +74,7 @@ cp "$PROJECT_DIR/frontend/index.html" "$PROJECT_DIR/frontend/app.js" \
   "$PROJECT_DIR/frontend/styles.css" "$PROJECT_DIR/frontend/sw.js" \
   "$PROJECT_DIR/frontend/icon.svg" "$PROJECT_DIR/frontend/manifest.webmanifest" "$APP_ROOT/frontend/"
 cp "$PROJECT_DIR/scripts/plesk-bootstrap.sh" "$PROJECT_DIR/scripts/plesk-start.sh" \
+  "$PROJECT_DIR/scripts/plesk-serve.sh" "$PROJECT_DIR/scripts/plesk-detach.py" \
   "$PROJECT_DIR/scripts/build-plesk-package.sh" "$APP_ROOT/scripts/"
 cp "$PROJECT_DIR/.env.production.example" "$PROJECT_DIR/README.md" "$APP_ROOT/"
 cp "$UV_ARCHIVE" "$APP_ROOT/uv-x86_64-unknown-linux-musl.tar.gz"
