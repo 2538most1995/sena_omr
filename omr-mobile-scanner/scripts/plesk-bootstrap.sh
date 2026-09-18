@@ -78,7 +78,7 @@ if ! "$VENV_DIR/bin/python" -c 'import sys; raise SystemExit(0 if sys.platform.s
 fi
 
 "$TOOLS_DIR/uv" pip install --python "$VENV_DIR/bin/python" -r "$PROJECT_DIR/backend/requirements.txt"
-"$VENV_DIR/bin/python" -c 'import cv2, fastapi, numpy, pymysql, uvicorn'
+"$VENV_DIR/bin/python" -c 'import cv2, fastapi, numpy, pymysql, uvicorn; import backend.main'
 
 if [[ ! -f "$PROJECT_DIR/.env" ]]; then
   cp "$PROJECT_DIR/.env.production.example" "$PROJECT_DIR/.env"

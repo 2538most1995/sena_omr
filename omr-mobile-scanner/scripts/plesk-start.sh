@@ -6,7 +6,10 @@ VENV_DIR="$PROJECT_DIR/.venv"
 RUN_DIR="$PROJECT_DIR/.run"
 PID_FILE="$RUN_DIR/uvicorn.pid"
 LOG_FILE="$RUN_DIR/uvicorn.log"
-PORT="${OMR_PORT:-18080}"
+# Plesk reserves OMR_PORT for its own application runtime and currently injects
+# 8000.  Use an app-specific variable so Apache's proxy and Uvicorn cannot
+# silently drift onto different ports.
+PORT="${OMR_LISTEN_PORT:-18080}"
 RUNTIME_LIBS_DIR="$PROJECT_DIR/runtime-libs"
 
 mkdir -p "$RUN_DIR"
@@ -25,8 +28,14 @@ fi
 if [[ -f "$PID_FILE" ]]; then
   EXISTING_PID="$(<"$PID_FILE")"
   if [[ "$EXISTING_PID" =~ ^[0-9]+$ ]] && kill -0 "$EXISTING_PID" 2>/dev/null; then
-    echo "OMR API process $EXISTING_PID exists but is not ready yet." >&2
-    exit 1
+    # The PID belongs to this app because only this script writes PID_FILE. A
+    # live-but-unhealthy process is normally a previous deploy on the wrong
+    # port, so replace it instead of leaving every keep-alive run blocked.
+    kill "$EXISTING_PID" 2>/dev/null || true
+    for _ in {1..10}; do
+      kill -0 "$EXISTING_PID" 2>/dev/null || break
+      sleep 1
+    done
   fi
 fi
 
