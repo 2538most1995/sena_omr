@@ -40,14 +40,10 @@ if [[ -f "$PID_FILE" ]]; then
 fi
 
 cd "$PROJECT_DIR"
-"$VENV_DIR/bin/python" -m uvicorn backend.main:app \
-  --host 127.0.0.1 \
-  --port "$PORT" \
-  --proxy-headers \
-  >>"$LOG_FILE" 2>&1 </dev/null &
-API_PID=$!
-echo "$API_PID" > "$PID_FILE"
-disown "$API_PID" 2>/dev/null || true
+"$VENV_DIR/bin/python" "$PROJECT_DIR/scripts/plesk-detach.py" \
+  --pid-file "$PID_FILE" \
+  --log-file "$LOG_FILE" \
+  --port "$PORT"
 
 if curl --silent --fail --max-time 3 --retry 30 --retry-delay 1 \
   --retry-all-errors "http://127.0.0.1:$PORT/api/health" >/dev/null; then
