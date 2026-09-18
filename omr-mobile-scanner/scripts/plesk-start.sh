@@ -40,7 +40,7 @@ if [[ -f "$PID_FILE" ]]; then
 fi
 
 cd "$PROJECT_DIR"
-nohup "$VENV_DIR/bin/uvicorn" backend.main:app \
+"$VENV_DIR/bin/python" -m uvicorn backend.main:app \
   --host 127.0.0.1 \
   --port "$PORT" \
   --proxy-headers \
