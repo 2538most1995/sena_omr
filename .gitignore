@@ -1,0 +1,14 @@
+.DS_Store
+*.zip
+*.tar.gz
+*.sha256
+
+omr-mobile-scanner/.env
+omr-mobile-scanner/.run/
+omr-mobile-scanner/.tools/
+omr-mobile-scanner/.venv/
+omr-mobile-scanner/.playwright-cli/
+omr-mobile-scanner/output/
+omr-mobile-scanner/sample_scan_result.json
+**/__pycache__/
+*.pyc

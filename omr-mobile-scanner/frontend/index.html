@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#4f46e5" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <title>OMR Mobile Scanner</title>
+  <link rel="manifest" href="assets/manifest.webmanifest" />
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="assets/icon.svg" />
+  <link rel="stylesheet" href="assets/styles.css?v=11" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">OMR</div>
+        <div><b>Smart Checker</b><span>ตรวจด้วยมือถือ</span></div>
+      </div>
+      <nav>
+        <button class="nav-item active" data-view="scan"><span>◉</span> สแกนกระดาษ</button>
+        <button class="nav-item" data-view="key"><span>✓</span> ตั้งค่าการตรวจ</button>
+        <button class="nav-item" data-view="report"><span>▦</span> รายงานการตรวจ</button>
+      </nav>
+      <div class="side-note">
+        <b>รูปแบบที่รองรับ</b>
+        <span>แบบฟอร์ม 1 หรือ 2 หน้า สูงสุด 100 ข้อ</span>
+        <span>ก ข ค ง / A B C D</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="pageTitle">สแกนกระดาษคำตอบ</h1>
+          <p id="pageSubtitle">ตรวจรหัสนักศึกษา รายวิชา และสถานศึกษาก่อนคิดคะแนน</p>
+        </div>
+        <div class="status-pill"><i></i><span id="serverStatus">กำลังตรวจระบบ…</span></div>
+      </header>
+
+      <section id="view-scan" class="view active">
+        <div class="metrics">
+          <div class="metric"><span>ความพร้อมกล้อง</span><b id="cameraMetric">พร้อม</b><small>รองรับมือถือ</small></div>
+          <div class="metric"><span>กระดาษปัจจุบัน</span><b><span id="doneSides">0</span>/<span id="requiredSides">2</span></b><small>หน้า</small></div>
+          <div class="metric"><span>ข้อที่อ่านแล้ว</span><b id="readCount">0</b><small>จาก <span id="readTotal">100</span> ข้อ</small></div>
+          <div class="metric"><span>ต้องตรวจทาน</span><b id="uncertainCount">0</b><small>ข้อ</small></div>
+        </div>
+
+        <div class="scan-config" id="scanConfig">
+          <div><span>ภาคเรียนปัจจุบัน</span><b id="scanTermLabel">กำลังโหลด…</b></div>
+          <label><span>รายวิชาที่จะตรวจ <em>* ต้องเลือกก่อนสแกน</em></span><select id="scanSubjectCode" disabled><option value="">กำลังโหลดรายวิชาทั้งหมด…</option></select></label>
+          <div class="auto-group"><span>กลุ่มเรียนของผู้เข้าสอบ</span><b id="detectedGroup">ระบบจะค้นหาให้อัตโนมัติ</b></div>
+          <button class="btn secondary" id="scanLoadSubjectsBtn">รีเฟรชรายวิชา</button>
+          <small id="scanSubjectStatus">กำลังเชื่อมต่อ SDL_school</small>
+          <small id="detectedGroupStatus">อ่านรหัสนักศึกษาจากด้านหน้าเพื่อค้นหากลุ่มเรียน</small>
+        </div>
+
+        <div class="workspace">
+          <section class="card scan-card">
+            <div class="card-head">
+              <div>
+                <span class="eyebrow">LIVE SCAN</span>
+                <h2 id="scanSideTitle">1. ถ่ายด้านหน้า</h2>
+              </div>
+              <div class="segmented">
+                <button id="frontTab" class="active">หน้า 1–50</button>
+                <button id="backTab">หลัง 51–100</button>
+              </div>
+            </div>
+
+            <div class="camera-frame" id="cameraFrame">
+              <video id="video" playsinline autoplay muted></video>
+              <img id="preview" alt="ภาพกระดาษคำตอบ" />
+              <canvas id="captureCanvas"></canvas>
+              <div class="scan-guide">
+                <span class="corner tl"></span><span class="corner tr"></span>
+                <span class="corner bl"></span><span class="corner br"></span>
+                <div class="guide-label">วางกระดาษให้เต็มกรอบ • เห็นขอบกระดาษครบ 4 ด้าน</div>
+              </div>
+              <div class="empty-camera" id="emptyCamera">
+                <div class="camera-icon">▣</div>
+                <b>พร้อมสแกนด้วยกล้องมือถือ</b>
+                <span>แนะนำแสงสว่างสม่ำเสมอ และถือกล้องขนานกับกระดาษ</span>
+              </div>
+              <div class="quality-badge" id="qualityBadge">รอภาพ</div>
+            </div>
+
+            <div class="capture-actions">
+              <button class="btn primary" id="openCameraBtn">เปิดกล้อง</button>
+              <button class="btn success hidden" id="captureBtn">ถ่ายภาพ</button>
+              <label class="btn secondary file-btn">เลือกรูปจากเครื่อง<input id="fileInput" type="file" accept="image/*" capture="environment" /></label>
+              <button class="btn ghost hidden" id="retakeBtn">ถ่ายใหม่</button>
+            </div>
+
+            <div class="scan-actions">
+              <button class="btn scan-now" id="scanBtn" disabled>
+                <span class="scan-icon">⌁</span><span>วิเคราะห์กระดาษคำตอบ</span>
+              </button>
+              <div class="hint">ระบบจะปรับมุมภาพ แสง และอ่านวงกลมระบายอัตโนมัติ</div>
+            </div>
+          </section>
+
+          <section class="card result-card">
+            <div class="card-head">
+              <div><span class="eyebrow">RESULT</span><h2>ผลการอ่าน</h2></div>
+              <span class="chip" id="resultChip">ยังไม่สแกน</span>
+            </div>
+
+            <div class="identity-grid">
+              <div><span>รหัสผู้เข้าสอบ</span><b id="candidateId">—</b></div>
+              <div><span>รหัสสถานศึกษา</span><b id="schoolCode">—</b></div>
+              <div><span>รหัสรายวิชาบนกระดาษ</span><b id="paperSubjectCode">—</b></div>
+              <div><span>คะแนน</span><b id="scoreText">—</b></div>
+            </div>
+
+            <div class="validation-panel" id="validationPanel">
+              <div class="validation-head"><b>ตรวจสอบข้อมูลก่อนตรวจคะแนน</b><span id="validationSummary">ยังไม่ได้ตั้งค่าวิชา</span></div>
+              <div class="validation-list">
+                <div id="checkStudent"><i></i><span>ค้นพบกลุ่มเรียนจากรหัสนักศึกษา</span><b>รอตรวจ</b></div>
+                <div id="checkSubject"><i></i><span>รหัสรายวิชา</span><b>รอตรวจ</b></div>
+                <div id="checkSchool"><i></i><span>รหัสสถานศึกษา</span><b>รอตรวจ</b></div>
+              </div>
+            </div>
+
+            <div class="quality-row">
+              <div class="quality-item"><span>การจัดแนว</span><b id="quadStatus">—</b></div>
+              <div class="quality-item"><span>ความเชื่อมั่นเฉลี่ย</span><b id="avgConfidence">—</b></div>
+              <div class="quality-item"><span>สถานะ</span><b id="reviewStatus">รอสแกน</b></div>
+            </div>
+
+            <div class="answer-section">
+              <div class="section-title"><b id="answerRangeLabel">คำตอบ 1–100</b><span>แตะข้อเพื่อแก้ไขได้</span></div>
+              <div id="answerGrid" class="answer-grid"></div>
+            </div>
+
+            <div class="legend"><span><i class="ok"></i>อ่านได้</span><span><i class="warn"></i>ตรวจทาน</span><span><i class="blank"></i>ว่าง</span></div>
+
+            <details class="debug-box">
+              <summary>ดูภาพตรวจจับตำแหน่ง</summary>
+              <img id="debugImage" alt="ภาพตรวจจับ" />
+            </details>
+
+            <button class="btn save-btn" id="saveBtn" disabled>บันทึกผลการตรวจ</button>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-key" class="view">
+        <div class="card key-card">
+          <div class="card-head"><div><span class="eyebrow">EXAM SETUP</span><h2>ตั้งค่าวิชาและเฉลยก่อนตรวจ</h2></div><span class="chip">เก็บในเครื่องนี้</span></div>
+          <div class="setup-grid">
+            <label><span>ภาคเรียนปัจจุบัน</span><input id="termInput" value="1/2569" readonly /></label>
+            <button class="btn secondary" id="loadSubjectsBtn">รีเฟรชรายวิชาทั้งหมด</button>
+            <label><span>วิชาของเทมเพลตเฉลย</span><select id="subjectCode" disabled><option value="">กำลังโหลดรายวิชา…</option></select></label>
+            <label><span>รหัสสถานศึกษาที่ต้องตรง</span><input id="expectedSchoolCode" inputmode="numeric" placeholder="เช่น 12" /></label>
+          </div>
+          <p id="subjectStatus" class="setup-status">ยังไม่ได้ดึงรายวิชา</p>
+          <div class="section-title"><b>เฉลยข้อสอบ</b><span>รองรับข้อความ, TXT, CSV และ JSON</span></div>
+          <p>วางเฉลยรูปแบบ <b>1:A, 2:C, 3:B</b> หรือพิมพ์ตัวเลือกเรียงต่อกัน เช่น <b>DCACAD...</b> — เฉลยถึงข้อ 50 ใช้ 1 หน้า และเกินข้อ 50 ใช้ 2 หน้า</p>
+          <textarea id="keyInput" rows="8" placeholder="1:D, 2:C, 3:A, 4:C, ..."></textarea>
+          <div class="key-actions">
+            <label class="btn secondary file-btn">นำเข้าไฟล์เฉลย<input id="keyFileInput" type="file" accept=".txt,.csv,.json,text/plain,text/csv,application/json" /></label>
+            <button class="btn secondary" id="downloadKeyTemplateBtn">ดาวน์โหลดเทมเพลต CSV</button>
+            <button class="btn primary" id="saveKeyBtn">บันทึกการตั้งค่า</button>
+            <button class="btn ghost" id="clearKeyBtn">ล้างเฉลย</button>
+            <span id="keyCount">ยังไม่มีเฉลย</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-report" class="view">
+        <div class="report-heading">
+          <div>
+            <h2>ภาพรวมการตรวจข้อสอบ</h2>
+            <p>ติดตามผู้เรียนที่ตรวจแล้วและยังไม่ตรวจ แยกตามรายวิชาและกลุ่มเรียน</p>
+          </div>
+          <button class="btn secondary" id="reportRefreshBtn">รีเฟรชรายงาน</button>
+        </div>
+
+        <div class="report-filters" aria-label="ตัวกรองรายงาน">
+          <label><span>รายวิชา</span><select id="reportSubject"><option value="">กำลังโหลดรายวิชา...</option></select></label>
+          <label><span>กลุ่มเรียน</span><select id="reportGroup"><option value="">ทุกกลุ่มเรียน</option></select></label>
+          <label><span>สถานะการตรวจ</span><select id="reportStatus"><option value="all">ทุกสถานะ</option><option value="checked">ตรวจแล้ว</option><option value="pending">ยังไม่ตรวจ</option></select></label>
+          <label class="report-search"><span>ค้นหานักศึกษา</span><input id="reportSearch" type="search" placeholder="รหัสหรือชื่อนักศึกษา" /></label>
+        </div>
+
+        <div class="report-metrics">
+          <article><span>นักศึกษาทั้งหมด</span><b id="reportTotal">0</b><small>คน</small></article>
+          <article><span>ตรวจแล้ว</span><b id="reportChecked">0</b><small>คน</small></article>
+          <article><span>ยังไม่ตรวจ</span><b id="reportPending">0</b><small>คน</small></article>
+          <article class="completion"><span>ความคืบหน้า</span><b id="reportRate">0%</b><small id="reportGroupCount">0 กลุ่มเรียน</small></article>
+        </div>
+
+        <div class="card report-card">
+          <div class="report-state" id="reportLoading">กำลังโหลดรายงาน...</div>
+          <div class="report-state error hidden" id="reportError"></div>
+          <div class="report-table-wrap hidden" id="reportTableWrap">
+            <table class="report-table">
+              <thead><tr><th>รหัสนักศึกษา</th><th>ชื่อ - นามสกุล</th><th>กลุ่มเรียน</th><th>สถานะ</th><th>คะแนน</th><th>ตรวจล่าสุด</th><th>จัดการ</th></tr></thead>
+              <tbody id="reportTableBody"></tbody>
+            </table>
+          </div>
+          <div class="report-state hidden" id="reportEmpty">ไม่พบข้อมูลตามตัวกรองที่เลือก</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="assets/app.js?v=11"></script>
+</body>
+</html>

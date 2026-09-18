@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="OMR Smart Checker">
+  <defs>
+    <linearGradient id="g" x1="52" y1="30" x2="460" y2="482" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7c3aed"/>
+      <stop offset="1" stop-color="#4338ca"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#g)"/>
+  <rect x="92" y="72" width="328" height="368" rx="38" fill="#fff"/>
+  <path d="M160 154h192M160 218h192M160 282h110" fill="none" stroke="#c7d2fe" stroke-width="24" stroke-linecap="round"/>
+  <circle cx="328" cy="330" r="63" fill="#10b981"/>
+  <path d="m295 330 23 24 45-51" fill="none" stroke="#fff" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
