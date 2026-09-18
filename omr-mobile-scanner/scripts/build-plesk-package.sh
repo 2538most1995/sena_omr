@@ -4,9 +4,9 @@ set -euo pipefail
 PROJECT_DIR="$(cd "${BASH_SOURCE[0]%/*}/.." && pwd)"
 DEPLOY_ROOT="$(cd "$PROJECT_DIR/.." && pwd)"
 OUTPUT_FILE="$DEPLOY_ROOT/sena-omr-plesk-deploy.zip"
-UV_ARCHIVE="$DEPLOY_ROOT/uv-x86_64-unknown-linux-gnu.tar.gz"
-UV_DOWNLOAD_URL="https://github.com/astral-sh/uv/releases/download/0.12.14/uv-x86_64-unknown-linux-gnu.tar.gz"
-UV_SHA256="18ef5c3888ae59828cb13f38d57e9389b8173ecc719eff163bfafc74b38f5936"
+UV_ARCHIVE="$DEPLOY_ROOT/uv-x86_64-unknown-linux-musl.tar.gz"
+UV_DOWNLOAD_URL="https://github.com/astral-sh/uv/releases/download/0.12.14/uv-x86_64-unknown-linux-musl.tar.gz"
+UV_SHA256="df163630683e5a2106d3320e2a448fde8eda5e7b9b47f617c5c332769728e735"
 STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sena-omr-package.XXXXXX")"
 PACKAGE_ROOT="$STAGE_DIR/package"
 APP_ROOT="$PACKAGE_ROOT/omr-mobile-scanner"
@@ -20,7 +20,7 @@ trap cleanup EXIT
 command -v zip >/dev/null 2>&1 || { echo "zip is required." >&2; exit 1; }
 if [[ ! -f "$UV_ARCHIVE" ]]; then
   command -v curl >/dev/null 2>&1 || { echo "curl is required to download uv." >&2; exit 1; }
-  UV_ARCHIVE="$STAGE_DIR/uv-x86_64-unknown-linux-gnu.tar.gz"
+  UV_ARCHIVE="$STAGE_DIR/uv-x86_64-unknown-linux-musl.tar.gz"
   curl --proto '=https' --tlsv1.2 -LsSf "$UV_DOWNLOAD_URL" -o "$UV_ARCHIVE"
 fi
 
@@ -40,7 +40,7 @@ cp "$PROJECT_DIR/frontend/index.html" "$PROJECT_DIR/frontend/app.js" \
 cp "$PROJECT_DIR/scripts/plesk-bootstrap.sh" "$PROJECT_DIR/scripts/plesk-start.sh" \
   "$PROJECT_DIR/scripts/build-plesk-package.sh" "$APP_ROOT/scripts/"
 cp "$PROJECT_DIR/.env.production.example" "$PROJECT_DIR/README.md" "$APP_ROOT/"
-cp "$UV_ARCHIVE" "$APP_ROOT/uv-x86_64-unknown-linux-gnu.tar.gz"
+cp "$UV_ARCHIVE" "$APP_ROOT/uv-x86_64-unknown-linux-musl.tar.gz"
 
 chmod 755 "$APP_ROOT/scripts/"*.sh
 (
