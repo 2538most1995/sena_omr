@@ -11,7 +11,7 @@ RewriteEngine On
 
 # Reject direct browser requests for private application directories. Internal
 # rewrites to frontend assets are still allowed because THE_REQUEST is unchanged.
-RewriteCond %{THE_REQUEST} "\s/+(?:[^?\s]*/)?omr-mobile-scanner/(?:backend|scripts|tests|mamp|\.run|\.tools|\.venv)(?:[/\s?])" [NC]
+RewriteCond %{THE_REQUEST} "\s/+(?:[^?\s]*/)?omr-mobile-scanner/(?:backend|scripts|tests|mamp|runtime-libs|\.run|\.tools|\.venv|\.python|\.runtime-libs)(?:[/\s?])" [NC]
 RewriteRule ^ - [R=404,L]
 
 # Keep the public application at /sena_omr while the source stays in its

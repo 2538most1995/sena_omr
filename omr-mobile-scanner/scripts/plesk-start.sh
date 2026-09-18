@@ -7,8 +7,10 @@ RUN_DIR="$PROJECT_DIR/.run"
 PID_FILE="$RUN_DIR/uvicorn.pid"
 LOG_FILE="$RUN_DIR/uvicorn.log"
 PORT="${OMR_PORT:-18080}"
+RUNTIME_LIBS_DIR="$PROJECT_DIR/runtime-libs"
 
 mkdir -p "$RUN_DIR"
+export LD_LIBRARY_PATH="$RUNTIME_LIBS_DIR:/usr/lib:/usr/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 if [[ ! -x "$VENV_DIR/bin/uvicorn" ]]; then
   echo "Runtime is missing. Run scripts/plesk-bootstrap.sh first." >&2
