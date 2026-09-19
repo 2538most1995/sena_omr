@@ -18,7 +18,8 @@ if [[ ! -d "$VENV_DIR" ]]; then
   "$PYTHON_BIN" -m venv "$VENV_DIR"
 fi
 
-if [[ ! -x "$VENV_DIR/bin/uvicorn" ]]; then
+if [[ ! -x "$VENV_DIR/bin/uvicorn" ]] || \
+   ! "$VENV_DIR/bin/python" -c 'import fastapi, httpx, cv2, numpy, pymysql, PIL, multipart' 2>/dev/null; then
   "$VENV_DIR/bin/python" -m pip install -r "$PROJECT_DIR/backend/requirements.txt"
 fi
 

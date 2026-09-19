@@ -10,7 +10,7 @@
   <link rel="manifest" href="assets/manifest.webmanifest" />
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="assets/icon.svg" />
-  <link rel="stylesheet" href="assets/styles.css?v=11" />
+  <link rel="stylesheet" href="assets/styles.css?v=12" />
 </head>
 <body>
   <div class="app-shell">
@@ -65,8 +65,8 @@
                 <h2 id="scanSideTitle">1. ถ่ายด้านหน้า</h2>
               </div>
               <div class="segmented">
-                <button id="frontTab" class="active">หน้า 1–50</button>
-                <button id="backTab">หลัง 51–100</button>
+                <button id="frontTab" class="active">หน้า 1-50</button>
+                <button id="backTab">หลัง 51-100</button>
               </div>
             </div>
 
@@ -109,10 +109,10 @@
             </div>
 
             <div class="identity-grid">
-              <div><span>รหัสผู้เข้าสอบ</span><b id="candidateId">—</b></div>
-              <div><span>รหัสสถานศึกษา</span><b id="schoolCode">—</b></div>
-              <div><span>รหัสรายวิชาบนกระดาษ</span><b id="paperSubjectCode">—</b></div>
-              <div><span>คะแนน</span><b id="scoreText">—</b></div>
+              <div><span>รหัสผู้เข้าสอบ</span><b id="candidateId">-</b></div>
+              <div><span>รหัสสถานศึกษา</span><b id="schoolCode">-</b></div>
+              <div><span>รหัสรายวิชาบนกระดาษ</span><b id="paperSubjectCode">-</b></div>
+              <div><span>คะแนน</span><b id="scoreText">-</b></div>
             </div>
 
             <div class="validation-panel" id="validationPanel">
@@ -125,13 +125,13 @@
             </div>
 
             <div class="quality-row">
-              <div class="quality-item"><span>การจัดแนว</span><b id="quadStatus">—</b></div>
-              <div class="quality-item"><span>ความเชื่อมั่นเฉลี่ย</span><b id="avgConfidence">—</b></div>
+              <div class="quality-item"><span>การจัดแนว</span><b id="quadStatus">-</b></div>
+              <div class="quality-item"><span>ความเชื่อมั่นเฉลี่ย</span><b id="avgConfidence">-</b></div>
               <div class="quality-item"><span>สถานะ</span><b id="reviewStatus">รอสแกน</b></div>
             </div>
 
             <div class="answer-section">
-              <div class="section-title"><b id="answerRangeLabel">คำตอบ 1–100</b><span>แตะข้อเพื่อแก้ไขได้</span></div>
+              <div class="section-title"><b id="answerRangeLabel">คำตอบ 1-100</b><span>แตะข้อเพื่อแก้ไขได้</span></div>
               <div id="answerGrid" class="answer-grid"></div>
             </div>
 
@@ -149,7 +149,7 @@
 
       <section id="view-key" class="view">
         <div class="card key-card">
-          <div class="card-head"><div><span class="eyebrow">EXAM SETUP</span><h2>ตั้งค่าวิชาและเฉลยก่อนตรวจ</h2></div><span class="chip">เก็บในเครื่องนี้</span></div>
+          <div class="card-head"><div><span class="eyebrow">EXAM SETUP</span><h2>ตั้งค่าวิชาและเฉลยก่อนตรวจ</h2></div><span class="chip" id="answerKeyStorage">ฐานข้อมูลกลาง</span></div>
           <div class="setup-grid">
             <label><span>ภาคเรียนปัจจุบัน</span><input id="termInput" value="1/2569" readonly /></label>
             <button class="btn secondary" id="loadSubjectsBtn">รีเฟรชรายวิชาทั้งหมด</button>
@@ -158,7 +158,7 @@
           </div>
           <p id="subjectStatus" class="setup-status">ยังไม่ได้ดึงรายวิชา</p>
           <div class="section-title"><b>เฉลยข้อสอบ</b><span>รองรับข้อความ, TXT, CSV และ JSON</span></div>
-          <p>วางเฉลยรูปแบบ <b>1:A, 2:C, 3:B</b> หรือพิมพ์ตัวเลือกเรียงต่อกัน เช่น <b>DCACAD...</b> — เฉลยถึงข้อ 50 ใช้ 1 หน้า และเกินข้อ 50 ใช้ 2 หน้า</p>
+          <p>วางเฉลยรูปแบบ <b>1:A, 2:C, 3:B</b> หรือพิมพ์ตัวเลือกเรียงต่อกัน เช่น <b>DCACAD...</b> เฉลยถึงข้อ 50 ใช้ 1 หน้า และเกินข้อ 50 ใช้ 2 หน้า</p>
           <textarea id="keyInput" rows="8" placeholder="1:D, 2:C, 3:A, 4:C, ..."></textarea>
           <div class="key-actions">
             <label class="btn secondary file-btn">นำเข้าไฟล์เฉลย<input id="keyFileInput" type="file" accept=".txt,.csv,.json,text/plain,text/csv,application/json" /></label>
@@ -209,6 +209,6 @@
   </div>
 
   <div class="toast" id="toast"></div>
-  <script src="assets/app.js?v=11"></script>
+  <script src="assets/app.js?v=12"></script>
 </body>
 </html>

@@ -20,6 +20,7 @@ from main import (  # noqa: E402
     _normalise_subjects,
     _paper_student_code,
     _paper_subject_code,
+    _resolve_observed_student,
 )
 
 
@@ -74,6 +75,24 @@ class SubjectNormalisationTests(unittest.TestCase):
             'student_code': '6800000001', 'student_name': 'เด็กหญิงหนึ่ง',
             'group_id': 'g1', 'group_code': '1/1', 'group_name': 'ห้อง 1',
         }])
+
+    def test_resolves_unique_partly_read_student_code_from_roster(self):
+        rows = [
+            {'student_code': '6823000662', 'student_name': 'ผู้เรียนหนึ่ง', 'group_id': 'g1', 'group_name': 'ห้อง 1'},
+            {'student_code': '6823000773', 'student_name': 'ผู้เรียนสอง', 'group_id': 'g2', 'group_name': 'ห้อง 2'},
+        ]
+        row, resolution = _resolve_observed_student('6823???662', rows)
+        self.assertEqual(row['student_code'], '6823000662')
+        self.assertEqual(resolution, 'recovered')
+
+    def test_rejects_ambiguous_partly_read_student_code(self):
+        rows = [
+            {'student_code': '6823000662'},
+            {'student_code': '6823110662'},
+        ]
+        with self.assertRaises(main.HTTPException) as error:
+            _resolve_observed_student('6823??0662', rows)
+        self.assertEqual(error.exception.status_code, 409)
 
 
 class SubjectEndpointTests(unittest.TestCase):
@@ -184,11 +203,39 @@ class SubjectEndpointTests(unittest.TestCase):
             'score': 18, 'max_score': 20, 'answers': {'1': 'A'},
             'checked_at': '2026-09-17T20:35:00',
         }
-        with tempfile.TemporaryDirectory() as directory, patch.object(main, 'BASE', Path(directory)):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(main, 'BASE', Path(directory)), \
+                patch.object(main.storage, 'mysql_configured', return_value=False):
             main._store_local_score(payload)
             self.assertTrue(main._local_scores('TH101', '1/2569'))
             self.assertTrue(main._delete_local_score('6800000001', 'TH101', 'g1', '1/2569'))
             self.assertEqual(main._local_scores('TH101', '1/2569'), {})
+
+    def test_answer_key_crud_uses_shared_storage_api(self):
+        client = TestClient(main.app)
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(main, 'BASE', Path(directory)), \
+                patch.object(main.storage, 'mysql_configured', return_value=False):
+            saved = client.put('/api/answer-keys/TH101', json={
+                'subject_code': 'TH101', 'paper_subject_code': 'TH101',
+                'subject_name': 'ภาษาไทย', 'term': '1/2569', 'school_code': '12',
+                'answers': {'1': 'A', '2': 'C'},
+            })
+            listed = client.get('/api/answer-keys', params={'term': '1/2569'})
+            deleted = client.delete('/api/answer-keys/TH101', params={'term': '1/2569'})
+
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()['answer_key']['answers'], {'1': 'A', '2': 'C'})
+        self.assertEqual(listed.json()['total'], 1)
+        self.assertTrue(deleted.json()['deleted'])
+
+    def test_answer_key_rejects_missing_question(self):
+        response = TestClient(main.app).put('/api/answer-keys/TH101', json={
+            'subject_code': 'TH101', 'paper_subject_code': 'TH101',
+            'subject_name': 'ภาษาไทย', 'term': '1/2569', 'school_code': '12',
+            'answers': {'1': 'A', '3': 'C'},
+        })
+        self.assertEqual(response.status_code, 422)
 
     def test_proxy_sends_auth_and_query_then_returns_stable_shape(self):
         calls = []
@@ -260,7 +307,9 @@ class SubjectEndpointTests(unittest.TestCase):
             'SDL_SCHOOL_SCORES_PATH': '/results/{subject_code}/{group_id}',
         }
         client = TestClient(main.app)
-        with patch.dict(os.environ, env), patch.object(main.httpx, 'AsyncClient', FakeClient):
+        with patch.dict(os.environ, env), \
+                patch.object(main.httpx, 'AsyncClient', FakeClient), \
+                patch.object(main, '_store_local_score'):
             groups = client.get('/api/subjects/TH101/class-groups', params={'term': '1/2569'})
             students = client.get('/api/class-groups/g1/students', params={
                 'term': '1/2569', 'subject_code': 'TH101',

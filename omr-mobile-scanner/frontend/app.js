@@ -46,7 +46,7 @@ const state = {
   side: 'front', stream: null, fileBlob: null, front: null, back: null,
   answers: {}, answerKey: {}, config: savedConfig, subjects: [], groups: [], students: [],
   subjectSetups: loadSubjectSetups(), validation: { ok: false }, loadingSubjects: false,
-  reportRows: [], reportSubjectCode: '', reportLoading: false,
+  reportRows: [], reportSubjectCode: '', reportLoading: false, resolvedStudentCode: '',
 };
 
 function currentTerm() {
@@ -78,6 +78,21 @@ function saveSubjectSetup(setup) {
   localStorage.setItem('omr-key', JSON.stringify(setup.answerKey));
 }
 
+function replaceServerAnswerKeys(rows, term) {
+  state.subjectSetups = Object.fromEntries(
+    Object.entries(state.subjectSetups).filter(([, setup]) => setup.term && setup.term !== term),
+  );
+  (rows || []).forEach(row => {
+    const setup = {
+      term: row.term, subjectCode: row.subject_code, subjectName: row.subject_name || row.subject_code,
+      paperSubjectCode: row.paper_subject_code || row.subject_code,
+      schoolCode: row.school_code, groupId: '', groupName: '', answerKey: row.answers || {},
+    };
+    state.subjectSetups[normaliseCode(setup.subjectCode)] = setup;
+  });
+  localStorage.setItem('omr-subject-setups', JSON.stringify(state.subjectSetups));
+}
+
 async function apiFetch(url, options) {
   const response = await fetch(appUrl(url), options);
   const data = await response.json().catch(() => ({}));
@@ -89,6 +104,7 @@ async function ping() {
   try {
     const data = await apiFetch('/api/health');
     $('#serverStatus').textContent = data.data_source === 'unconfigured' ? 'ระบบพร้อม • ยังไม่เชื่อมข้อมูล' : 'ระบบพร้อม • เชื่อมข้อมูลแล้ว';
+    $('#answerKeyStorage').textContent = data.storage === 'mysql' ? 'MySQL กลาง' : 'ฐานข้อมูลทดสอบ';
     $('.status-pill').classList.add('online');
   } catch {
     $('#serverStatus').textContent = 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้';
@@ -235,13 +251,13 @@ $('#retakeBtn').onclick = resetCapture;
 async function downscaleBlob(blob, maxWidth = 4200) {
   try {
     const bitmap = await createImageBitmap(blob);
-    if (bitmap.width <= maxWidth) return blob;
-    const scale = maxWidth / bitmap.width;
+    const scale = Math.min(1, maxWidth / Math.max(bitmap.width, bitmap.height));
     const canvas = document.createElement('canvas');
-    canvas.width = maxWidth;
+    canvas.width = Math.round(bitmap.width * scale);
     canvas.height = Math.round(bitmap.height * scale);
     canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    return await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', .9));
+    bitmap.close?.();
+    return await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', .92));
   } catch { return blob; }
 }
 
@@ -299,7 +315,7 @@ function setCheck(id, expected, actual, customMatch) {
     : Boolean(complete && customMatch);
   element.classList.add(matches ? 'pass' : 'fail');
   if (!expectedCode) element.querySelector('b').textContent = 'ยังไม่ได้ตั้งค่า';
-  else if (!complete) element.querySelector('b').textContent = `อ่านไม่ครบ (${actual || '—'})`;
+  else if (!complete) element.querySelector('b').textContent = `อ่านไม่ครบ (${actual || '-'})`;
   else if (matches) element.querySelector('b').textContent = `ถูกต้อง (${actual})`;
   else element.querySelector('b').textContent = customMatch === undefined
     ? `คาด ${expected} / อ่าน ${actual}` : `ไม่พบ ${actual} ในกลุ่ม`;
@@ -321,7 +337,7 @@ function validatePaper() {
     return false;
   }
   const metadata = state.front.metadata || {};
-  const candidate = metadata.candidate_id?.value || '';
+  const candidate = state.resolvedStudentCode || metadata.candidate_id?.value || '';
   const subject = metadata.subject_code?.value || '';
   const school = metadata.school_code?.value || '';
   const rosterCodes = new Set(state.students.map(student => normaliseCode(student.code)));
@@ -341,7 +357,11 @@ function validatePaper() {
 
 function renderResults(data) {
   const metadata = data.metadata || {};
-  if (metadata.candidate_id) $('#candidateId').textContent = metadata.candidate_id.value || 'อ่านไม่ครบ';
+  if (metadata.candidate_id) {
+    const observed = metadata.candidate_id.value || 'อ่านไม่ครบ';
+    $('#candidateId').textContent = state.resolvedStudentCode && normaliseCode(state.resolvedStudentCode) !== normaliseCode(observed)
+      ? `${observed} -> ${state.resolvedStudentCode}` : observed;
+  }
   if (metadata.school_code) $('#schoolCode').textContent = metadata.school_code.value || 'อ่านไม่พบ';
   if (metadata.subject_code) $('#paperSubjectCode').textContent = metadata.subject_code.value || 'อ่านไม่พบ';
   $('#quadStatus').textContent = data.quality.quad_found ? 'พบขอบกระดาษ' : 'โหมดสำรอง';
@@ -352,8 +372,21 @@ function renderResults(data) {
   $('#doneSides').textContent = (state.front ? 1 : 0) + (requiredPageCount() === 2 && state.back ? 1 : 0);
   $('#resultChip').textContent = state.side === 'front' ? 'อ่านด้านหน้าแล้ว' : 'อ่านด้านหลังแล้ว';
   $('#reviewStatus').textContent = uncertain ? 'มีข้อให้ตรวจทาน' : 'พร้อมบันทึก';
-  $('#qualityBadge').textContent = data.quality.quad_found ? 'ตรวจจับสำเร็จ' : 'ตรวจได้ แต่ควรถ่ายให้เห็นขอบ';
-  $('#qualityBadge').className = 'quality-badge ' + (data.quality.quad_found ? 'good' : 'bad');
+  const issueLabels = {
+    low_resolution: 'ภาพเล็กเกินไป', document_edges_missing: 'ไม่พบขอบกระดาษ',
+    excessive_perspective: 'มุมเอียงมากเกินไป', image_blur: 'ภาพไม่คมชัด',
+    too_dark: 'ภาพมืดเกินไป', too_bright: 'ภาพสว่างเกินไป', glare: 'มีแสงสะท้อน',
+    answer_grid_fallback: 'ใช้ตำแหน่งสำรอง', low_read_confidence: 'ความเชื่อมั่นต่ำ',
+    metadata_unreliable: 'รหัสบนกระดาษอ่านไม่ครบ',
+  };
+  const blockingIssues = (data.quality.issues || [])
+    .filter(issue => issue !== 'metadata_unreliable' && issue !== 'answer_grid_fallback');
+  $('#qualityBadge').textContent = blockingIssues.length
+    ? issueLabels[blockingIssues[0]] || 'ควรถ่ายใหม่' : 'ตรวจจับสำเร็จ';
+  $('#qualityBadge').className = 'quality-badge ' + (data.quality.capture_ok ? 'good' : 'bad');
+  if (!data.quality.capture_ok) {
+    toast(`ภาพยังไม่พร้อม: ${blockingIssues.map(issue => issueLabels[issue] || issue).join(', ')}`);
+  }
   validatePaper();
   renderScore();
 }
@@ -361,7 +394,7 @@ function renderResults(data) {
 function renderAllAnswers() {
   const grid = $('#answerGrid');
   const lastQuestion = requiredPageCount() === 1 ? 50 : 100;
-  $('#answerRangeLabel').textContent = `คำตอบ 1–${lastQuestion}`;
+  $('#answerRangeLabel').textContent = `คำตอบ 1-${lastQuestion}`;
   grid.innerHTML = '';
   for (let question = 1; question <= lastQuestion; question++) {
     const answer = state.answers[question];
@@ -369,7 +402,7 @@ function renderAllAnswers() {
     element.className = 'answer ' + (!answer ? 'blank' : answer.needs_review ? 'warn' : answer.status === 'ok' ? 'ok' : 'blank');
     element.dataset.q = question;
     element.title = answer?.needs_review ? `ควรตรวจทานข้อ ${question}` : answer?.status === 'blank' ? 'ไม่ได้ตอบ' : '';
-    element.innerHTML = `<div class="q">${question}</div><div class="v">${answer?.choice || (answer?.status === 'multiple' ? '!' : '–')}</div>`;
+    element.innerHTML = `<div class="q">${question}</div><div class="v">${answer?.choice || (answer?.status === 'multiple' ? '!' : '-')}</div>`;
     element.onclick = () => editAnswer(question);
     grid.appendChild(element);
   }
@@ -388,7 +421,7 @@ function renderReviewStatus() {
 
 function editAnswer(question) {
   const oldValue = state.answers[question]?.choice || '';
-  const value = prompt(`ข้อ ${question} — กรอก A, B, C, D หรือเว้นว่าง`, oldValue);
+  const value = prompt(`ข้อ ${question}: กรอก A, B, C, D หรือเว้นว่าง`, oldValue);
   if (value === null) return;
   const choice = value.trim().toUpperCase();
   if (choice && !['A', 'B', 'C', 'D'].includes(choice)) return toast('กรุณากรอก A, B, C หรือ D');
@@ -425,8 +458,10 @@ function renderScore() {
 
 function updateSaveButton() {
   const hasPendingReview = Object.values(state.answers).some(answer => answer.needs_review);
+  const capturesAreUsable = Boolean(state.front?.quality?.capture_ok
+    && (requiredPageCount() === 1 || state.back?.quality?.capture_ok));
   $('#saveBtn').disabled = !(hasRequiredPages() && state.validation.ok
-    && Object.keys(state.answerKey).length && !hasPendingReview);
+    && Object.keys(state.answerKey).length && !hasPendingReview && capturesAreUsable);
 }
 
 function parseKey(text) {
@@ -492,7 +527,7 @@ function populateSubjectSelect(select, subjects, selectedCode = '') {
     const option = document.createElement('option');
     option.value = subject.code;
     const paperCode = subject.paper_code || subject.code;
-    option.textContent = `${paperCode} — ${subject.name}`;
+    option.textContent = `${paperCode} - ${subject.name}`;
     option.dataset.name = subject.name;
     option.dataset.paperCode = paperCode;
     option.dataset.schoolCode = subject.school_code || '';
@@ -511,6 +546,7 @@ function populateSubjects(subjects, selectedCode = '') {
 
 function clearDetectedGroup(message = 'ระบบจะค้นหาให้อัตโนมัติ') {
   state.students = [];
+  state.resolvedStudentCode = '';
   saveConfig({ ...state.config, groupId: '', groupName: '' });
   $('#detectedGroup').textContent = message;
   $('.auto-group').classList.remove('resolved');
@@ -520,19 +556,26 @@ function clearDetectedGroup(message = 'ระบบจะค้นหาให�
 async function resolveStudentGroup(studentCode) {
   clearDetectedGroup('กำลังค้นหากลุ่มเรียน...');
   const code = String(studentCode || '').trim();
-  if (!code || code.includes('?')) {
-    setStatus('#detectedGroupStatus', 'อ่านรหัสนักศึกษาไม่ครบ จึงยังค้นหากลุ่มไม่ได้', true);
+  state.resolvedStudentCode = '';
+  if (!code) {
+    setStatus('#detectedGroupStatus', 'ไม่พบรหัสนักศึกษาในภาพ', true);
     return false;
   }
   try {
-    const data = await apiFetch(`/api/subjects/${encodeURIComponent(state.config.subjectCode)}/students/${encodeURIComponent(code)}/class-group?term=${encodeURIComponent(currentTerm())}`);
+    const data = await apiFetch(`/api/subjects/${encodeURIComponent(state.config.subjectCode)}/resolve-student?term=${encodeURIComponent(currentTerm())}&observed_code=${encodeURIComponent(code)}`);
     const group = data.group || {};
     const student = data.student || { code };
+    state.resolvedStudentCode = String(student.code || code);
     state.students = [student];
     saveConfig({ ...state.config, groupId: String(group.id || ''), groupName: group.name || group.code || '' });
     $('#detectedGroup').textContent = group.name || group.code || group.id;
     $('.auto-group').classList.add('resolved');
-    setStatus('#detectedGroupStatus', `${student.name || student.code} อยู่ในกลุ่ม ${group.name || group.code || group.id}`);
+    if (data.resolution === 'recovered') {
+      $('#candidateId').textContent = `${code} -> ${student.code}`;
+      setStatus('#detectedGroupStatus', `ยืนยันรหัส ${student.code} จากรายชื่อ: ${student.name || student.code}`);
+    } else {
+      setStatus('#detectedGroupStatus', `${student.name || student.code} อยู่ในกลุ่ม ${group.name || group.code || group.id}`);
+    }
     return true;
   } catch (error) {
     setStatus('#detectedGroupStatus', error.message || 'ไม่พบกลุ่มเรียนของนักศึกษาคนนี้', true);
@@ -565,9 +608,20 @@ async function loadAllSubjects() {
     state.subjects = data.subjects || [];
     $('#termInput').value = data.term || currentTerm();
     $('#scanTermLabel').textContent = data.term || currentTerm();
+    let keyStorageMessage = '';
+    try {
+      const keyData = await apiFetch(`/api/answer-keys?term=${encodeURIComponent(data.term || currentTerm())}`);
+      replaceServerAnswerKeys(keyData.answer_keys, data.term || currentTerm());
+      keyStorageMessage = ` • เฉลยกลาง ${keyData.total || 0} วิชา`;
+      $('#answerKeyStorage').textContent = keyData.storage === 'mysql' ? 'MySQL กลาง' : 'ฐานข้อมูลทดสอบ';
+    } catch (error) {
+      keyStorageMessage = ' • ใช้เฉลยสำรองในเครื่อง';
+    }
     const selectedCode = state.config.subjectCode || state.subjects[0]?.code || '';
     populateSubjects(state.subjects, selectedCode);
-    const message = state.subjects.length ? `พบ ${state.subjects.length} รายวิชา • ภาคเรียน ${data.term}` : 'ไม่พบรายวิชาในภาคเรียนนี้';
+    const message = state.subjects.length
+      ? `พบ ${state.subjects.length} รายวิชา • ภาคเรียน ${data.term}${keyStorageMessage}`
+      : 'ไม่พบรายวิชาในภาคเรียนนี้';
     setStatus('#subjectStatus', message, !state.subjects.length);
     setStatus('#scanSubjectStatus', message, !state.subjects.length);
     if (selectedCode) await selectSubject(selectedCode);
@@ -579,7 +633,7 @@ async function loadAllSubjects() {
     state.subjects = savedSubjects;
     populateSubjects(savedSubjects, state.config.subjectCode);
     setStatus('#subjectStatus', error.message || 'เชื่อมต่อ SDL_school ไม่สำเร็จ', true);
-    setStatus('#scanSubjectStatus', 'ใช้ได้เฉพาะวิชาที่เคยบันทึก — กรุณาตรวจการตั้งค่า API', true);
+    setStatus('#scanSubjectStatus', 'ใช้ได้เฉพาะวิชาที่เคยบันทึก กรุณาตรวจการตั้งค่า API', true);
     if (state.config.subjectCode) await selectSubject(state.config.subjectCode, { loadRemoteGroups: false });
   } finally {
     state.loadingSubjects = false;
@@ -631,7 +685,7 @@ $('#keyFileInput').onchange = async event => {
     if (!Object.keys(key).length) throw new Error('ไม่พบเฉลยในไฟล์');
     $('#keyInput').value = Object.entries(key).map(([question, answer]) => `${question}:${answer}`).join(', ');
     const issueMessage = answerKeyIssueMessage(answerKeyIssues(key));
-    setStatus('#keyCount', issueMessage || `นำเข้าแล้ว ${Object.keys(key).length} ข้อ — กดบันทึกการตั้งค่า`, Boolean(issueMessage));
+    setStatus('#keyCount', issueMessage || `นำเข้าแล้ว ${Object.keys(key).length} ข้อ กดบันทึกการตั้งค่า`, Boolean(issueMessage));
     if (issueMessage) throw new Error(`เฉลยไม่ต่อเนื่อง: ${issueMessage}`);
   } catch (error) { toast(error.message || 'อ่านไฟล์เฉลยไม่สำเร็จ'); }
 };
@@ -645,7 +699,7 @@ $('#downloadKeyTemplateBtn').onclick = () => {
   URL.revokeObjectURL(link.href);
 };
 
-$('#saveKeyBtn').onclick = () => {
+$('#saveKeyBtn').onclick = async () => {
   const select = $('#subjectCode');
   const option = select.options[select.selectedIndex];
   const sourceText = $('#keyInput').value;
@@ -663,6 +717,24 @@ $('#saveKeyBtn').onclick = () => {
     $('#keyInput').focus();
     return toast(`กรุณาแก้เฉลย: ${issueMessage}`);
   }
+  const button = $('#saveKeyBtn');
+  button.disabled = true;
+  button.textContent = 'กำลังบันทึก...';
+  try {
+    const result = await apiFetch(`/api/answer-keys/${encodeURIComponent(setup.subjectCode)}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subject_code: setup.subjectCode, paper_subject_code: setup.paperSubjectCode,
+        subject_name: setup.subjectName, term: setup.term, school_code: setup.schoolCode,
+        answers: setup.answerKey,
+      }),
+    });
+    $('#answerKeyStorage').textContent = result.storage === 'mysql' ? 'MySQL กลาง' : 'ฐานข้อมูลทดสอบ';
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = 'บันทึกการตั้งค่า';
+    return toast(error.message || 'บันทึกเฉลยลงฐานข้อมูลไม่สำเร็จ');
+  }
   saveSubjectSetup(setup);
   const { answerKey, ...config } = setup;
   saveConfig(config);
@@ -673,11 +745,18 @@ $('#saveKeyBtn').onclick = () => {
   }
   $('#keyCount').textContent = `บันทึก ${Object.keys(key).length} ข้อ • ตรวจ ${pageCountForAnswerKey(key)} หน้า • รหัสบนกระดาษ ${setup.paperSubjectCode}`;
   resetForNextStudent();
-  toast(`บันทึกวิชา ${setup.paperSubjectCode} แล้ว ใช้กระดาษ ${pageCountForAnswerKey(key)} หน้า`);
+  button.disabled = false;
+  button.textContent = 'บันทึกการตั้งค่า';
+  toast(`บันทึกวิชา ${setup.paperSubjectCode} ลงฐานข้อมูลแล้ว ใช้กระดาษ ${pageCountForAnswerKey(key)} หน้า`);
 };
 
-$('#clearKeyBtn').onclick = () => {
+$('#clearKeyBtn').onclick = async () => {
   if (!state.config.subjectCode) return;
+  try {
+    await apiFetch(`/api/answer-keys/${encodeURIComponent(state.config.subjectCode)}?term=${encodeURIComponent(currentTerm())}`, { method: 'DELETE' });
+  } catch (error) {
+    return toast(error.message || 'ลบเฉลยจากฐานข้อมูลไม่สำเร็จ');
+  }
   $('#keyInput').value = '';
   state.answerKey = {};
   const setup = subjectSetup(state.config.subjectCode);
@@ -688,7 +767,7 @@ $('#clearKeyBtn').onclick = () => {
 
 function buildHistoryItem() {
   const { score, total } = calculateScore();
-  const candidate = state.front.metadata.candidate_id.value;
+  const candidate = state.resolvedStudentCode || state.front.metadata.candidate_id.value;
   return {
     id: Date.now(), time: new Date().toISOString(), candidate,
     candidateName: state.students.find(student => normaliseCode(student.code) === normaliseCode(candidate))?.name || '',
@@ -699,6 +778,9 @@ function buildHistoryItem() {
     uncertain: Object.values(state.answers).filter(answer => answer.needs_review).length,
     blank: Object.values(state.answers).filter(answer => answer.status === 'blank').length,
     answers: Object.fromEntries(Object.entries(state.answers).map(([question, answer]) => [question, answer.choice])),
+    scanQuality: { front: state.front?.quality || {}, back: state.back?.quality || {} },
+    reviewCount: (state.front?.quality?.needs_review || 0) + (state.back?.quality?.needs_review || 0),
+    correctedCount: Object.values(state.answers).filter(answer => answer.manual).length,
     syncStatus: 'pending', syncError: '',
   };
 }
@@ -706,7 +788,9 @@ function buildHistoryItem() {
 async function syncHistoryItem(item) {
   const payload = {
     student_code: item.candidate, subject_code: item.subject, class_group_id: String(item.groupId),
-    term: item.term, score: item.score, max_score: item.total, answers: item.answers, checked_at: item.time,
+    term: item.term, score: item.score, max_score: item.total, answers: item.answers,
+    scan_quality: item.scanQuality, review_count: item.reviewCount,
+    corrected_count: item.correctedCount, checked_at: item.time,
   };
   try {
     const result = await apiFetch('/api/scores', {
@@ -759,13 +843,13 @@ function resetForNextStudent() {
   state.back = null;
   state.answers = {};
   state.validation = { ok: false };
-  ['candidateId', 'schoolCode', 'paperSubjectCode'].forEach(id => $('#' + id).textContent = '—');
+  ['candidateId', 'schoolCode', 'paperSubjectCode'].forEach(id => $('#' + id).textContent = '-');
   $('#doneSides').textContent = '0';
   $('#readCount').textContent = '0';
   $('#uncertainCount').textContent = '0';
   $('#resultChip').textContent = 'ยังไม่สแกน';
-  $('#quadStatus').textContent = '—';
-  $('#avgConfidence').textContent = '—';
+  $('#quadStatus').textContent = '-';
+  $('#avgConfidence').textContent = '-';
   $('#reviewStatus').textContent = 'รอสแกน';
   $('#debugImage').removeAttribute('src');
   $('#debugImage').closest('details').open = false;
@@ -821,7 +905,7 @@ function renderReport() {
       : '<span class="report-status pending">ยังไม่ตรวจ</span>';
     const actionHtml = row.checked
       ? `<button class="cancel-score" data-student="${escapeHtml(row.student_code)}" data-group="${escapeHtml(row.group_id)}" data-name="${escapeHtml(row.student_name || row.student_code)}">ยกเลิกผลตรวจ</button>`
-      : '<span class="no-action">—</span>';
+      : '<span class="no-action">-</span>';
     return `<tr>
       <td data-label="รหัสนักศึกษา">${escapeHtml(row.student_code)}</td>
       <td data-label="ชื่อ - นามสกุล"><div class="report-name"><b>${escapeHtml(row.student_name || row.student_code)}</b></div></td>

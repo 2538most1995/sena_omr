@@ -10,6 +10,7 @@ omr-mobile-scanner/.venv/
 omr-mobile-scanner/.python/
 omr-mobile-scanner/.runtime-libs/
 omr-mobile-scanner/runtime-libs/
+.playwright-cli/
 omr-mobile-scanner/.playwright-cli/
 omr-mobile-scanner/output/
 omr-mobile-scanner/sample_scan_result.json

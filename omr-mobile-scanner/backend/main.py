@@ -1,6 +1,6 @@
 import os
 import re
-import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote
@@ -15,8 +15,10 @@ from pydantic import BaseModel, Field
 
 try:
     from .omr import scan_image_bytes
+    from . import storage
 except ImportError:  # Allows `uvicorn main:app` when launched inside backend/.
     from omr import scan_image_bytes
+    import storage
 
 BASE = Path(__file__).resolve().parent.parent
 FRONTEND = BASE / 'frontend'
@@ -112,7 +114,22 @@ if allowed_origins:
 @app.get('/api/health')
 def health():
     source = 'sdl_api' if _sdl_api_configured() else 'sdl_mysql' if _sdl_mysql_configured() else 'unconfigured'
-    return {'ok': True, 'data_source': source}
+    if storage.mysql_configured():
+        try:
+            connection = storage.mysql_connection()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute('SELECT 1 AS ready')
+                    cursor.fetchone()
+            finally:
+                connection.close()
+        except (OSError, ValueError, pymysql.MySQLError) as exc:
+            raise HTTPException(status_code=503, detail='OMR MySQL database is unavailable') from exc
+    return {
+        'ok': True,
+        'data_source': source,
+        'storage': 'mysql' if storage.mysql_configured() else 'sqlite_fallback',
+    }
 
 
 def _first_value(item: dict[str, Any], keys: tuple[str, ...]) -> Any:
@@ -137,6 +154,41 @@ def _paper_student_code(code: Any) -> str:
     """
     value = str(code or '').strip()
     return value[-10:] if value.isdigit() and len(value) > 10 else value
+
+
+def _resolve_observed_student(observed_code: str, rows: list[dict[str, Any]]) -> tuple[dict[str, Any], str]:
+    """Resolve an imperfect OMR code only when the roster has one safe winner."""
+    observed = str(observed_code or '').strip().upper()
+    if not re.fullmatch(r'[A-Z0-9?._-]{5,50}', observed):
+        raise HTTPException(status_code=422, detail='Observed student code is invalid')
+
+    exact = [row for row in rows if _paper_student_code(row.get('student_code')) == observed]
+    if len(exact) == 1:
+        return exact[0], 'exact'
+
+    known = sum(character != '?' for character in observed)
+    if len(observed) != 10 or known < 5:
+        raise HTTPException(status_code=404, detail='Student code is too incomplete to resolve safely')
+
+    ranked: list[tuple[int, int, dict[str, Any]]] = []
+    for row in rows:
+        candidate = _paper_student_code(row.get('student_code')).upper()
+        if len(candidate) != len(observed):
+            continue
+        mismatches = sum(
+            1 for actual, expected in zip(candidate, observed)
+            if expected != '?' and actual != expected
+        )
+        if mismatches <= 1:
+            unknowns = observed.count('?')
+            ranked.append((mismatches * 10 + unknowns, mismatches, row))
+
+    ranked.sort(key=lambda item: item[0])
+    if not ranked:
+        raise HTTPException(status_code=404, detail='Student is not registered for this subject')
+    if len(ranked) > 1 and ranked[0][0] == ranked[1][0]:
+        raise HTTPException(status_code=409, detail='Student code matches more than one roster entry')
+    return ranked[0][2], 'recovered'
 
 
 def _normalise_subjects(payload: Any) -> list[dict[str, Any]]:
@@ -510,23 +562,12 @@ def _mysql_group_students(group_id: str, subject_code: str, term: str) -> list[d
 
 
 def _local_scores(subject_code: str, term: str) -> dict[tuple[str, str], dict[str, Any]]:
-    score_db = BASE / '.run' / 'omr_scores.sqlite3'
-    if not score_db.exists():
-        return {}
     try:
-        with sqlite3.connect(score_db) as connection:
-            connection.row_factory = sqlite3.Row
-            rows = connection.execute(
-                '''SELECT student_code, class_group_id, score, max_score,
-                          checked_at, updated_at
-                   FROM scores WHERE subject_code = ? AND term = ?''',
-                (subject_code, term),
-            ).fetchall()
-        return {
-            (_paper_student_code(row['student_code']), str(row['class_group_id']).strip()): dict(row)
-            for row in rows
-        }
-    except sqlite3.OperationalError:
+        rows = storage.scores_for_subject(BASE, subject_code, term)
+        return {(_paper_student_code(key[0]), key[1]): value for key, value in rows.items()}
+    except (OSError, ValueError, pymysql.MySQLError) as exc:
+        if storage.mysql_configured():
+            raise HTTPException(status_code=503, detail='Cannot read the OMR MySQL database') from exc
         return {}
 
 
@@ -656,51 +697,21 @@ async def _api_subject_roster(
 
 
 def _store_local_score(payload: dict[str, Any]) -> None:
-    score_db = BASE / '.run' / 'omr_scores.sqlite3'
-    score_db.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(score_db) as connection:
-        connection.execute(
-            '''CREATE TABLE IF NOT EXISTS scores (
-                student_code TEXT NOT NULL, subject_code TEXT NOT NULL,
-                class_group_id TEXT NOT NULL, term TEXT NOT NULL,
-                score REAL NOT NULL, max_score REAL NOT NULL,
-                answers_json TEXT NOT NULL, checked_at TEXT,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (student_code, subject_code, class_group_id, term)
-            )'''
-        )
-        import json as json_module
-        connection.execute(
-            '''INSERT INTO scores
-               (student_code, subject_code, class_group_id, term, score, max_score, answers_json, checked_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(student_code, subject_code, class_group_id, term) DO UPDATE SET
-                 score=excluded.score, max_score=excluded.max_score,
-                 answers_json=excluded.answers_json, checked_at=excluded.checked_at,
-                 updated_at=CURRENT_TIMESTAMP''',
-            (
-                payload['student_code'], payload['subject_code'], payload['class_group_id'],
-                payload['term'], payload['score'], payload['max_score'],
-                json_module.dumps(payload['answers'], ensure_ascii=False), payload.get('checked_at'),
-            ),
-        )
+    try:
+        storage.store_score(BASE, payload)
+    except (OSError, ValueError, pymysql.MySQLError) as exc:
+        raise HTTPException(status_code=503, detail='Cannot save to the OMR database') from exc
 
 
 def _delete_local_score(student_code: str, subject_code: str, class_group_id: str, term: str) -> bool:
-    score_db = BASE / '.run' / 'omr_scores.sqlite3'
-    if not score_db.exists():
-        return False
     candidate_code = _paper_student_code(student_code)
     try:
-        with sqlite3.connect(score_db) as connection:
-            cursor = connection.execute(
-                '''DELETE FROM scores
-                   WHERE subject_code = ? AND class_group_id = ? AND term = ?
-                     AND (student_code = ? OR substr(student_code, -10) = ?)''',
-                (subject_code, class_group_id, term, student_code, candidate_code),
-            )
-            return cursor.rowcount > 0
-    except sqlite3.OperationalError:
+        return storage.delete_score(
+            BASE, student_code, candidate_code, subject_code, class_group_id, term,
+        )
+    except (OSError, ValueError, pymysql.MySQLError) as exc:
+        if storage.mysql_configured():
+            raise HTTPException(status_code=503, detail='Cannot update the OMR MySQL database') from exc
         return False
 
 
@@ -772,8 +783,105 @@ class ScoreResult(BaseModel):
     term: str = Field(pattern=r'^\d{1,2}/\d{4}$')
     score: float = Field(ge=0)
     max_score: float = Field(gt=0)
-    answers: dict[str, str | None] = Field(default_factory=dict)
-    checked_at: str | None = None
+    answers: dict[str, Literal['A', 'B', 'C', 'D'] | None] = Field(default_factory=dict)
+    scan_quality: dict[str, Any] = Field(default_factory=dict)
+    review_count: int = Field(default=0, ge=0, le=100)
+    corrected_count: int = Field(default=0, ge=0, le=100)
+    checked_at: datetime | None = None
+
+
+class AnswerKeyPayload(BaseModel):
+    subject_code: str = Field(min_length=1, max_length=50)
+    paper_subject_code: str = Field(min_length=1, max_length=50)
+    subject_name: str = Field(default='', max_length=255)
+    term: str = Field(pattern=r'^\d{1,2}/\d{4}$')
+    school_code: str = Field(min_length=1, max_length=50)
+    answers: dict[str, str]
+
+
+def _validated_answer_key(payload: AnswerKeyPayload) -> dict[str, Any]:
+    answers: dict[str, str] = {}
+    for question, choice in payload.answers.items():
+        try:
+            number = int(question)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail='Answer-key question numbers must be integers') from exc
+        value = str(choice).strip().upper()
+        if number < 1 or number > 100 or value not in ('A', 'B', 'C', 'D'):
+            raise HTTPException(status_code=422, detail='Answer key must contain questions 1-100 with A, B, C or D')
+        answers[str(number)] = value
+    if not answers:
+        raise HTTPException(status_code=422, detail='Answer key cannot be empty')
+    highest = max(int(question) for question in answers)
+    missing = [number for number in range(1, highest + 1) if str(number) not in answers]
+    if missing:
+        raise HTTPException(status_code=422, detail=f'Answer key is missing question {missing[0]}')
+    data = payload.model_dump()
+    data['answers'] = answers
+    return data
+
+
+def _storage_error(exc: Exception) -> HTTPException:
+    return HTTPException(status_code=503, detail='Cannot connect to the OMR results database')
+
+
+@app.get('/api/answer-keys')
+def answer_keys(term: str = Query('1/2569', pattern=r'^\d{1,2}/\d{4}$')):
+    try:
+        rows = storage.list_answer_keys(BASE, term)
+    except (OSError, ValueError, pymysql.MySQLError) as exc:
+        raise _storage_error(exc) from exc
+    return {
+        'term': term,
+        'answer_keys': rows,
+        'total': len(rows),
+        'storage': 'mysql' if storage.mysql_configured() else 'sqlite_fallback',
+    }
+
+
+@app.get('/api/answer-keys/{subject_code}')
+def answer_key(
+    subject_code: str = ApiPath(..., min_length=1, max_length=50),
+    term: str = Query('1/2569', pattern=r'^\d{1,2}/\d{4}$'),
+):
+    try:
+        row = storage.get_answer_key(BASE, subject_code, term)
+    except (OSError, ValueError, pymysql.MySQLError) as exc:
+        raise _storage_error(exc) from exc
+    if row is None:
+        raise HTTPException(status_code=404, detail='Answer key was not found')
+    return row
+
+
+@app.put('/api/answer-keys/{subject_code}')
+def save_answer_key(
+    payload: AnswerKeyPayload,
+    subject_code: str = ApiPath(..., min_length=1, max_length=50),
+):
+    if payload.subject_code.strip() != subject_code.strip():
+        raise HTTPException(status_code=422, detail='Subject code in path and body must match')
+    data = _validated_answer_key(payload)
+    try:
+        stored = storage.store_answer_key(BASE, data)
+    except (OSError, ValueError, pymysql.MySQLError) as exc:
+        raise _storage_error(exc) from exc
+    return {
+        'ok': True,
+        'answer_key': stored,
+        'storage': 'mysql' if storage.mysql_configured() else 'sqlite_fallback',
+    }
+
+
+@app.delete('/api/answer-keys/{subject_code}')
+def remove_answer_key(
+    subject_code: str = ApiPath(..., min_length=1, max_length=50),
+    term: str = Query('1/2569', pattern=r'^\d{1,2}/\d{4}$'),
+):
+    try:
+        deleted = storage.delete_answer_key(BASE, subject_code, term)
+    except (OSError, ValueError, pymysql.MySQLError) as exc:
+        raise _storage_error(exc) from exc
+    return {'ok': True, 'deleted': deleted, 'subject_code': subject_code, 'term': term}
 
 
 @app.get('/api/subjects')
@@ -878,6 +986,33 @@ async def class_group_students(
     }
 
 
+@app.get('/api/subjects/{subject_code}/resolve-student')
+async def resolve_subject_student(
+    subject_code: str = ApiPath(..., min_length=1, max_length=50),
+    observed_code: str = Query(..., min_length=5, max_length=50),
+    term: str = Query('1/2569', pattern=r'^\d{1,2}/\d{4}$'),
+):
+    """Resolve an exact or partly unreadable OMR code against one subject roster."""
+    if _sdl_api_configured():
+        rows = await _api_subject_roster(subject_code, term)
+        source = 'sdl_api'
+    elif _sdl_mysql_configured():
+        rows = _mysql_subject_roster(subject_code, term)
+        source = 'sdl_mysql'
+    else:
+        raise HTTPException(status_code=503, detail='SDL_school data source is not configured')
+    row, resolution = _resolve_observed_student(observed_code, rows)
+    return {
+        'student': {'code': row['student_code'], 'name': row['student_name']},
+        'group': {'id': row['group_id'], 'code': row['group_id'], 'name': row['group_name']},
+        'observed_code': observed_code,
+        'resolution': resolution,
+        'subject_code': subject_code,
+        'term': term,
+        'source': source,
+    }
+
+
 @app.get('/api/subjects/{subject_code}/students/{student_code}/class-group')
 async def subject_student_class_group(
     subject_code: str = ApiPath(..., min_length=1, max_length=50),
@@ -940,7 +1075,7 @@ async def submit_score(result: ScoreResult):
     """Persist a checked result locally and optionally forward it to a writable SDL endpoint."""
     if result.score > result.max_score:
         raise HTTPException(status_code=422, detail='score cannot be greater than max_score')
-    payload = result.model_dump()
+    payload = result.model_dump(mode='json')
     _store_local_score(payload)
     if not _sdl_api_configured() or not os.getenv('SDL_SCHOOL_SCORES_PATH', '').strip():
         return {'ok': True, 'delivery': 'stored', 'submitted': payload}
@@ -983,6 +1118,10 @@ async def scan(
             raise HTTPException(status_code=400, detail='Empty image')
         if len(data) > 20 * 1024 * 1024:
             raise HTTPException(status_code=413, detail='Image too large')
+        try:
+            (BASE / 'output' / 'last_scan.jpg').write_bytes(data)
+        except Exception:
+            pass
         return scan_image_bytes(data, side)
     except HTTPException:
         raise

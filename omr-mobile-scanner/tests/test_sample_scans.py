@@ -10,8 +10,14 @@ sys.path.insert(0, str(ROOT / 'backend'))
 from omr import scan_image_bytes  # noqa: E402
 
 
-FRONT_IMAGE = Path(os.environ.get('OMR_FRONT_IMAGE', ROOT / 'tests/fixtures/front.jpeg'))
-BACK_IMAGE = Path(os.environ.get('OMR_BACK_IMAGE', ROOT / 'tests/fixtures/back.jpeg'))
+DEFAULT_FRONT = ROOT / 'tests/fixtures/front.jpeg'
+DEFAULT_BACK = ROOT / 'tests/fixtures/back.jpeg'
+if not DEFAULT_FRONT.is_file():
+    DEFAULT_FRONT = Path.home() / 'Downloads/IMG_4962.jpeg'
+if not DEFAULT_BACK.is_file():
+    DEFAULT_BACK = Path.home() / 'Downloads/IMG_4963.jpeg'
+FRONT_IMAGE = Path(os.environ.get('OMR_FRONT_IMAGE', DEFAULT_FRONT))
+BACK_IMAGE = Path(os.environ.get('OMR_BACK_IMAGE', DEFAULT_BACK))
 
 
 class SampleScanTests(unittest.TestCase):
