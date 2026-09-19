@@ -113,13 +113,15 @@ if allowed_origins:
         CORSMiddleware,
         allow_origins=allowed_origins,
         allow_credentials=True,
-        allow_methods=['GET', 'POST', 'DELETE'],
+        allow_methods=['*'],
         allow_headers=['*'],
     )
 
 @app.get('/api/health')
 def health():
     source = 'sdl_api' if _sdl_api_configured() else 'sdl_mysql' if _sdl_mysql_configured() else 'unconfigured'
+    storage_type = 'sqlite_fallback'
+    storage_error = None
     if storage.mysql_configured():
         try:
             connection = storage.mysql_connection()
@@ -127,14 +129,17 @@ def health():
                 with connection.cursor() as cursor:
                     cursor.execute('SELECT 1 AS ready')
                     cursor.fetchone()
+                storage_type = 'mysql'
             finally:
                 connection.close()
-        except (OSError, ValueError, MySQLError) as exc:
-            raise HTTPException(status_code=503, detail='OMR MySQL database is unavailable') from exc
+        except Exception as exc:
+            storage_type = 'sqlite_fallback'
+            storage_error = str(exc)
     return {
         'ok': True,
         'data_source': source,
-        'storage': 'mysql' if storage.mysql_configured() else 'sqlite_fallback',
+        'storage': storage_type,
+        'storage_error': storage_error,
     }
 
 
@@ -828,7 +833,7 @@ def _validated_answer_key(payload: AnswerKeyPayload) -> dict[str, Any]:
 
 
 def _storage_error(exc: Exception) -> HTTPException:
-    return HTTPException(status_code=503, detail='Cannot connect to the OMR results database')
+    return HTTPException(status_code=503, detail=f'Cannot connect to the OMR results database: {exc}')
 
 
 @app.get('/api/answer-keys')

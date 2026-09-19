@@ -158,21 +158,26 @@ def _normalise_checked_at(value: Any) -> str | None:
 
 
 def scores_for_subject(base: Path, subject_code: str, term: str) -> dict[tuple[str, str], dict[str, Any]]:
+    rows = None
     if mysql_configured():
-        ensure_mysql(base)
-        connection = mysql_connection()
         try:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    '''SELECT student_code, class_group_id, score, max_score,
-                              checked_at, updated_at
-                       FROM omr_scores WHERE subject_code = %s AND term = %s''',
-                    (subject_code, term),
-                )
-                rows = cursor.fetchall()
-        finally:
-            connection.close()
-    else:
+            ensure_mysql(base)
+            connection = mysql_connection()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        '''SELECT student_code, class_group_id, score, max_score,
+                                  checked_at, updated_at
+                           FROM omr_scores WHERE subject_code = %s AND term = %s''',
+                        (subject_code, term),
+                    )
+                    rows = cursor.fetchall()
+            finally:
+                connection.close()
+        except Exception:
+            rows = None
+
+    if rows is None:
         path = _sqlite_path(base)
         if not path.exists():
             return {}
@@ -200,62 +205,70 @@ def store_score(base: Path, payload: dict[str, Any]) -> None:
         payload.get('review_count', 0), payload.get('corrected_count', 0),
         _normalise_checked_at(payload.get('checked_at')),
     )
+    saved_to_mysql = False
     if mysql_configured():
-        ensure_mysql(base)
-        connection = mysql_connection()
         try:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    '''INSERT INTO omr_scores
-                       (student_code, subject_code, class_group_id, term, score, max_score,
-                        answers_json, scan_quality_json, review_count, corrected_count, checked_at)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                       ON DUPLICATE KEY UPDATE
-                         score=VALUES(score), max_score=VALUES(max_score), answers_json=VALUES(answers_json),
-                         scan_quality_json=VALUES(scan_quality_json), review_count=VALUES(review_count),
-                         corrected_count=VALUES(corrected_count), checked_at=VALUES(checked_at)''',
-                    values,
-                )
-            connection.commit()
-        finally:
-            connection.close()
-        return
+            ensure_mysql(base)
+            connection = mysql_connection()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        '''INSERT INTO omr_scores
+                           (student_code, subject_code, class_group_id, term, score, max_score,
+                            answers_json, scan_quality_json, review_count, corrected_count, checked_at)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                           ON DUPLICATE KEY UPDATE
+                             score=VALUES(score), max_score=VALUES(max_score), answers_json=VALUES(answers_json),
+                             scan_quality_json=VALUES(scan_quality_json), review_count=VALUES(review_count),
+                             corrected_count=VALUES(corrected_count), checked_at=VALUES(checked_at)''',
+                        values,
+                    )
+                connection.commit()
+                saved_to_mysql = True
+            finally:
+                connection.close()
+        except Exception:
+            saved_to_mysql = False
 
-    path = _sqlite_path(base)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as connection:
-        _ensure_sqlite(connection)
-        connection.execute(
-            '''INSERT INTO scores
-               (student_code, subject_code, class_group_id, term, score, max_score, answers_json,
-                scan_quality_json, review_count, corrected_count, checked_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(student_code, subject_code, class_group_id, term) DO UPDATE SET
-                 score=excluded.score, max_score=excluded.max_score, answers_json=excluded.answers_json,
-                 scan_quality_json=excluded.scan_quality_json, review_count=excluded.review_count,
-                 corrected_count=excluded.corrected_count, checked_at=excluded.checked_at,
-                 updated_at=CURRENT_TIMESTAMP''',
-            values,
-        )
+    if not saved_to_mysql:
+        path = _sqlite_path(base)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(path) as connection:
+            _ensure_sqlite(connection)
+            connection.execute(
+                '''INSERT INTO scores
+                   (student_code, subject_code, class_group_id, term, score, max_score, answers_json,
+                    scan_quality_json, review_count, corrected_count, checked_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(student_code, subject_code, class_group_id, term) DO UPDATE SET
+                     score=excluded.score, max_score=excluded.max_score, answers_json=excluded.answers_json,
+                     scan_quality_json=excluded.scan_quality_json, review_count=excluded.review_count,
+                     corrected_count=excluded.corrected_count, checked_at=excluded.checked_at,
+                     updated_at=CURRENT_TIMESTAMP''',
+                values,
+            )
 
 
 def delete_score(base: Path, student_code: str, candidate_code: str, subject_code: str, class_group_id: str, term: str) -> bool:
     if mysql_configured():
-        ensure_mysql(base)
-        connection = mysql_connection()
         try:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    '''DELETE FROM omr_scores
-                       WHERE subject_code = %s AND class_group_id = %s AND term = %s
-                         AND (student_code = %s OR RIGHT(student_code, 10) = %s)''',
-                    (subject_code, class_group_id, term, student_code, candidate_code),
-                )
-                deleted = cursor.rowcount > 0
-            connection.commit()
-            return deleted
-        finally:
-            connection.close()
+            ensure_mysql(base)
+            connection = mysql_connection()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        '''DELETE FROM omr_scores
+                           WHERE subject_code = %s AND class_group_id = %s AND term = %s
+                             AND (student_code = %s OR RIGHT(student_code, 10) = %s)''',
+                        (subject_code, class_group_id, term, student_code, candidate_code),
+                    )
+                    deleted = cursor.rowcount > 0
+                connection.commit()
+                return deleted
+            finally:
+                connection.close()
+        except Exception:
+            pass
 
     path = _sqlite_path(base)
     if not path.exists():
@@ -272,21 +285,26 @@ def delete_score(base: Path, student_code: str, candidate_code: str, subject_cod
 
 
 def list_answer_keys(base: Path, term: str) -> list[dict[str, Any]]:
+    rows = None
     if mysql_configured():
-        ensure_mysql(base)
-        connection = mysql_connection()
         try:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    '''SELECT subject_code, paper_subject_code, subject_name, term, school_code,
-                              answer_count, answers_json, version, updated_at
-                       FROM omr_answer_keys WHERE term = %s ORDER BY subject_code''',
-                    (term,),
-                )
-                rows = cursor.fetchall()
-        finally:
-            connection.close()
-    else:
+            ensure_mysql(base)
+            connection = mysql_connection()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        '''SELECT subject_code, paper_subject_code, subject_name, term, school_code,
+                                  answer_count, answers_json, version, updated_at
+                           FROM omr_answer_keys WHERE term = %s ORDER BY subject_code''',
+                        (term,),
+                    )
+                    rows = cursor.fetchall()
+            finally:
+                connection.close()
+        except Exception:
+            rows = None
+
+    if rows is None:
         path = _sqlite_path(base)
         path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(path) as connection:
@@ -319,25 +337,31 @@ def store_answer_key(base: Path, payload: dict[str, Any]) -> dict[str, Any]:
         payload['subject_code'], payload['paper_subject_code'], payload.get('subject_name', ''),
         payload['term'], payload['school_code'], len(payload['answers']), answers_json,
     )
+    saved_to_mysql = False
     if mysql_configured():
-        ensure_mysql(base)
-        connection = mysql_connection()
         try:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    '''INSERT INTO omr_answer_keys
-                       (subject_code, paper_subject_code, subject_name, term, school_code, answer_count, answers_json)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s)
-                       ON DUPLICATE KEY UPDATE
-                         paper_subject_code=VALUES(paper_subject_code), subject_name=VALUES(subject_name),
-                         school_code=VALUES(school_code), answer_count=VALUES(answer_count),
-                         answers_json=VALUES(answers_json), version=version + 1''',
-                    values,
-                )
-            connection.commit()
-        finally:
-            connection.close()
-    else:
+            ensure_mysql(base)
+            connection = mysql_connection()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        '''INSERT INTO omr_answer_keys
+                           (subject_code, paper_subject_code, subject_name, term, school_code, answer_count, answers_json)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s)
+                           ON DUPLICATE KEY UPDATE
+                             paper_subject_code=VALUES(paper_subject_code), subject_name=VALUES(subject_name),
+                             school_code=VALUES(school_code), answer_count=VALUES(answer_count),
+                             answers_json=VALUES(answers_json), version=version + 1''',
+                        values,
+                    )
+                connection.commit()
+                saved_to_mysql = True
+            finally:
+                connection.close()
+        except Exception:
+            saved_to_mysql = False
+
+    if not saved_to_mysql:
         path = _sqlite_path(base)
         path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(path) as connection:
@@ -353,6 +377,7 @@ def store_answer_key(base: Path, payload: dict[str, Any]) -> dict[str, Any]:
                      updated_at=CURRENT_TIMESTAMP''',
                 values,
             )
+            connection.commit()
     stored = get_answer_key(base, payload['subject_code'], payload['term'])
     if stored is None:
         raise RuntimeError('Answer key was not saved')
@@ -361,19 +386,22 @@ def store_answer_key(base: Path, payload: dict[str, Any]) -> dict[str, Any]:
 
 def delete_answer_key(base: Path, subject_code: str, term: str) -> bool:
     if mysql_configured():
-        ensure_mysql(base)
-        connection = mysql_connection()
         try:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    'DELETE FROM omr_answer_keys WHERE subject_code = %s AND term = %s',
-                    (subject_code, term),
-                )
-                deleted = cursor.rowcount > 0
-            connection.commit()
-            return deleted
-        finally:
-            connection.close()
+            ensure_mysql(base)
+            connection = mysql_connection()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        'DELETE FROM omr_answer_keys WHERE subject_code = %s AND term = %s',
+                        (subject_code, term),
+                    )
+                    deleted = cursor.rowcount > 0
+                connection.commit()
+                return deleted
+            finally:
+                connection.close()
+        except Exception:
+            pass
     path = _sqlite_path(base)
     if not path.exists():
         return False
