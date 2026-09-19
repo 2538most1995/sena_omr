@@ -68,6 +68,7 @@ mkdir -p "$STAGE_DIR/libstdc" "$STAGE_DIR/libgcc"
 
 mkdir -p "$APP_ROOT/backend" "$APP_ROOT/database" "$APP_ROOT/frontend" "$APP_ROOT/scripts" "$APP_ROOT/runtime-libs"
 cp "$DEPLOY_ROOT/.htaccess" "$PACKAGE_ROOT/.htaccess"
+cp "$DEPLOY_ROOT/restart.php" "$PACKAGE_ROOT/restart.php"
 cp "$PROJECT_DIR/backend/__init__.py" "$PROJECT_DIR/backend/main.py" \
   "$PROJECT_DIR/backend/omr.py" "$PROJECT_DIR/backend/storage.py" \
   "$PROJECT_DIR/backend/requirements.txt" "$APP_ROOT/backend/"
@@ -78,6 +79,7 @@ cp "$PROJECT_DIR/frontend/index.html" "$PROJECT_DIR/frontend/app.js" \
 cp "$PROJECT_DIR/scripts/plesk-bootstrap.sh" "$PROJECT_DIR/scripts/plesk-start.sh" \
   "$PROJECT_DIR/scripts/plesk-serve.sh" "$PROJECT_DIR/scripts/plesk-stop.sh" \
   "$PROJECT_DIR/scripts/plesk-detach.py" "$PROJECT_DIR/scripts/init-mysql.py" \
+  "$PROJECT_DIR/scripts/plesk-restart.sh" \
   "$PROJECT_DIR/scripts/build-plesk-package.sh" "$APP_ROOT/scripts/"
 cp "$PROJECT_DIR/.env.production.example" "$PROJECT_DIR/README.md" "$APP_ROOT/"
 cp "$UV_ARCHIVE" "$APP_ROOT/uv-x86_64-unknown-linux-musl.tar.gz"

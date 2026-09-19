@@ -20,6 +20,11 @@ if [[ ! -x "$VENV_DIR/bin/uvicorn" ]]; then
   exit 1
 fi
 
+if [[ "${1:-}" == "--restart" ]] || [[ "${1:-}" == "restart" ]] || [[ "${1:-}" == "-r" ]]; then
+  echo "Restart requested. Stopping existing OMR API process..."
+  "$PROJECT_DIR/scripts/plesk-stop.sh" || true
+fi
+
 if curl --silent --fail --max-time 3 "http://127.0.0.1:$PORT/api/health" >/dev/null; then
   echo "OMR API is already healthy on port $PORT."
   exit 0
