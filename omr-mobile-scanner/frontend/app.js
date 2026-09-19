@@ -436,6 +436,7 @@ function renderResults(data) {
     timing_marks_missing: 'ไม่พบ timing marks ครบ', registration_marks_missing: 'ไม่พบ registration marks',
     side_mismatch: 'ถ่ายกระดาษผิดด้าน',
     answer_grid_fallback: 'ใช้ตำแหน่งสำรอง', low_read_confidence: 'ความเชื่อมั่นต่ำ',
+    metadata_grid_missing: 'จับตารางรหัสได้ไม่ครบ',
     metadata_unreliable: 'รหัสบนกระดาษอ่านไม่ครบ',
   };
   const blockingIssues = (data.quality.issues || []);

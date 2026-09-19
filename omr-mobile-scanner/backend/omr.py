@@ -91,7 +91,7 @@ SUBJECT_PREFIX_1 = ['ก', 'ค', 'ท', 'พ', 'ว', 'ส', 'อ', 'B', 'L', '
 SUBJECT_PREFIX_2 = ['ค', 'ช', 'ต', 'ท', 'ร', 'ว', 'ส', 'ฮ', 'D', 'F', 'M', 'P', 'S', 'T']
 
 OPTIONS = ['A', 'B', 'C', 'D']
-PIPELINE_VERSION = 'professional-omr-1.0'
+PIPELINE_VERSION = 'professional-omr-1.1'
 
 
 @dataclass
@@ -902,6 +902,9 @@ def _read_subject_code(warped: np.ndarray, gray: np.ndarray) -> Dict:
         'indices': indices,
         'complete': all(char is not None for char in chars),
         'confidence': round(float(np.mean(confidences)), 3),
+        'grid_detected': grid is not None,
+        'grid_source': 'detected' if grid is not None else 'calibrated_fallback',
+        'grid': {'columns': xs, 'rows': ys},
     }
 
 
@@ -1001,10 +1004,20 @@ def read_metadata(warped: np.ndarray, side: str) -> Dict:
     cand_grid = _detect_digit_grid(warped, (0, 180, int(CANON_W * 0.25), 750), is_school=False)
     cand_x, cand_y = cand_grid if cand_grid is not None else (CAND_X, CAND_Y)
     candidate = _read_metadata_columns(warped, gray, cand_x, cand_y, is_school=False)
+    candidate.update({
+        'grid_detected': cand_grid is not None,
+        'grid_source': 'detected' if cand_grid is not None else 'calibrated_fallback',
+        'grid': {'columns': cand_x, 'rows': cand_y},
+    })
 
     school_grid = _detect_digit_grid(warped, (0, 700, int(CANON_W * 0.25), 1180), is_school=True)
     school_x, school_y = school_grid if school_grid is not None else (SCHOOL_X, SCHOOL_Y)
     school = _read_metadata_columns(warped, gray, school_x, school_y, is_school=True)
+    school.update({
+        'grid_detected': school_grid is not None,
+        'grid_source': 'detected' if school_grid is not None else 'calibrated_fallback',
+        'grid': {'columns': school_x, 'rows': school_y},
+    })
 
     subject = _read_subject_code(warped, gray)
 
@@ -1014,7 +1027,39 @@ def read_metadata(warped: np.ndarray, side: str) -> Dict:
         'subject_code': subject,
     }
 
-def make_debug_overlay(warped: np.ndarray, side: str, answers: List[Dict]) -> np.ndarray:
+def _draw_metadata_overlay(out: np.ndarray, metadata: Dict) -> None:
+    """Draw the chosen code bubbles using the exact grids used for reading.
+
+    A green ring means both the printed grid and the selected bubble were
+    detected.  A calibrated fallback is deliberately orange so the debug image
+    cannot imply a reliable read when the registration grid was not found.
+    """
+    specs = (
+        ('candidate_id', 'digits'),
+        ('school_code', 'digits'),
+        ('subject_code', 'indices'),
+    )
+    for field_name, selection_key in specs:
+        field = metadata.get(field_name) or {}
+        grid = field.get('grid') or {}
+        xs = grid.get('columns') or []
+        ys = grid.get('rows') or []
+        selections = field.get(selection_key) or []
+        color = (35, 205, 45) if field.get('grid_detected') else (0, 165, 255)
+        for x, selected_index in zip(xs, selections):
+            if selected_index is None or not 0 <= int(selected_index) < len(ys):
+                continue
+            y = ys[int(selected_index)]
+            cv2.circle(out, (int(x), int(y)), 15, color, 4)
+            cv2.circle(out, (int(x), int(y)), 3, color, -1)
+
+
+def make_debug_overlay(
+    warped: np.ndarray,
+    side: str,
+    answers: List[Dict],
+    metadata: Optional[Dict] = None,
+) -> np.ndarray:
     out = warped.copy()
     dynamic = _detect_answer_grid(warped, side)
     if dynamic is not None:
@@ -1040,6 +1085,8 @@ def make_debug_overlay(warped: np.ndarray, side: str, answers: List[Dict]) -> np
                     col = (140, 140, 140)
                     thick = 1
                 cv2.circle(out, (int(x), int(y)), 15, col, thick)
+    if side == 'front' and metadata:
+        _draw_metadata_overlay(out, metadata)
     return out
 
 def encode_jpeg_b64(img: np.ndarray, quality: int = 82) -> str:
@@ -1160,7 +1207,7 @@ def scan_image_bytes(data: bytes, side: str, include_debug: bool = True) -> Dict
     grid_found = read_diagnostics['grid_source'] == 'detected'
     answers_at = time.perf_counter()
     meta = read_metadata(warped, side)
-    debug = make_debug_overlay(warped, side, answers) if include_debug else None
+    debug = make_debug_overlay(warped, side, answers, meta) if include_debug else None
     finished = time.perf_counter()
     answered = sum(1 for a in answers if a['status'] == 'ok')
     blank = sum(1 for a in answers if a['status'] == 'blank')
@@ -1186,11 +1233,20 @@ def scan_image_bytes(data: bytes, side: str, include_debug: bool = True) -> Dict
         identity_reliable = (
             meta.get('candidate_id', {}).get('complete')
             and meta.get('candidate_id', {}).get('confidence', 0) >= 0.55
+            and meta.get('candidate_id', {}).get('grid_detected')
             and meta.get('subject_code', {}).get('complete')
             and meta.get('subject_code', {}).get('confidence', 0) >= 0.55
+            and meta.get('subject_code', {}).get('grid_detected')
             and meta.get('school_code', {}).get('complete')
             and meta.get('school_code', {}).get('confidence', 0) >= 0.55
+            and meta.get('school_code', {}).get('grid_detected')
         )
+        metadata_grids_detected = all(
+            meta.get(field, {}).get('grid_detected')
+            for field in ('candidate_id', 'school_code', 'subject_code')
+        )
+        if not metadata_grids_detected:
+            quality['issues'].append('metadata_grid_missing')
         if not identity_reliable:
             quality['issues'].append('metadata_unreliable')
             quality['capture_ok'] = False

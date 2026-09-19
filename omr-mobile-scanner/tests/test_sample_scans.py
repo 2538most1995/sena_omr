@@ -1,3 +1,4 @@
+import base64
 import os
 import sys
 import unittest
@@ -40,16 +41,34 @@ class SampleScanTests(unittest.TestCase):
         self.assertRegex(result['metadata']['candidate_id']['value'], r'^\d{10}$')
         self.assertEqual(result['metadata']['school_code']['value'], '12')
         self.assertEqual(result['metadata']['subject_code']['value'], 'สค02037')
+        self.assertTrue(all(
+            result['metadata'][field]['grid_detected']
+            for field in ('candidate_id', 'school_code', 'subject_code')
+        ))
         self.assertEqual([a['choice'] for a in result['answers'][:20]], expected)
         self.assertTrue(all(a['status'] == 'blank' for a in result['answers'][20:]))
         self.assertEqual(result['quality']['answered'], 20)
         self.assertEqual(result['quality']['blank_answers'], 30)
         self.assertLessEqual(result['quality']['needs_review'], 2)
-        self.assertEqual(result['audit']['pipeline_version'], 'professional-omr-1.0')
+        self.assertEqual(result['audit']['pipeline_version'], 'professional-omr-1.1')
         self.assertGreaterEqual(result['quality']['timing_bar_count'], 45)
         self.assertGreaterEqual(result['quality']['registration_confidence'], 0.5)
         self.assertGreaterEqual(result['audit']['stages']['local_mesh']['coverage'], 0.9)
         self.assertTrue(all('top1' in answer and 'top2' in answer for answer in result['answers']))
+
+        debug_bytes = base64.b64decode(result['debug_image_base64'])
+        debug = cv2.imdecode(np.frombuffer(debug_bytes, np.uint8), cv2.IMREAD_COLOR)
+        self.assertIsNotNone(debug)
+        green = (
+            (debug[:, :, 1] > 140)
+            & (debug[:, :, 1] > debug[:, :, 0] + 40)
+            & (debug[:, :, 1] > debug[:, :, 2] + 40)
+        )
+        # The chosen bubbles must be visible in every metadata section, not
+        # only in the answer area.
+        self.assertGreater(np.count_nonzero(green[180:750, 0:400]), 200)
+        self.assertGreater(np.count_nonzero(green[700:1180, 0:400]), 40)
+        self.assertGreater(np.count_nonzero(green[620:1120, 390:630]), 120)
 
     @unittest.skipUnless(BACK_IMAGE.is_file(), 'back sample image is not available')
     def test_back_is_blank_without_false_positives(self):
