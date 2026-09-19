@@ -516,11 +516,30 @@ function renderScore() {
 }
 
 function updateSaveButton() {
-  const hasPendingReview = Object.values(state.answers).some(answer => answer.needs_review);
+  const pendingReviewCount = Object.values(state.answers).filter(answer => answer.needs_review).length;
+  const blockers = [];
+  if (!state.front) blockers.push('รอสแกนด้านหน้า');
+  else if (requiredPageCount() === 2 && !state.back) blockers.push('ต้องสแกนด้านหลังให้ครบ');
+  if (!Object.keys(state.answerKey).length) blockers.push('ยังไม่มีเฉลย');
+  if (state.front && !state.validation.ok) blockers.push('ข้อมูลผู้เรียน วิชา หรือสถานศึกษายังไม่ตรง');
+  if (pendingReviewCount) blockers.push(`แตะตรวจทานข้อสีส้มอีก ${pendingReviewCount} ข้อ`);
+
   const capturesAreUsable = Boolean(state.front?.quality?.capture_ok
     && (requiredPageCount() === 1 || state.back?.quality?.capture_ok));
-  $('#saveBtn').disabled = !(hasRequiredPages() && state.validation.ok
-    && Object.keys(state.answerKey).length && !hasPendingReview && capturesAreUsable);
+  const button = $('#saveBtn');
+  const hint = $('#saveHint');
+  button.disabled = blockers.length > 0;
+  button.title = blockers.join(' • ');
+  if (blockers.length) {
+    hint.textContent = `ยังบันทึกไม่ได้: ${blockers.join(' • ')}`;
+    hint.className = 'save-hint blocked';
+  } else if (!capturesAreUsable) {
+    hint.textContent = 'ตรวจข้อมูลครบแล้ว บันทึกได้ • คำเตือนคุณภาพภาพจะถูกเก็บในประวัติการตรวจ';
+    hint.className = 'save-hint warning';
+  } else {
+    hint.textContent = 'ข้อมูลครบถ้วน พร้อมบันทึกคะแนน';
+    hint.className = 'save-hint ready';
+  }
 }
 
 function parseKey(text) {
@@ -881,7 +900,11 @@ function upsertHistory(item) {
 }
 
 $('#saveBtn').onclick = async () => {
+  const pendingReviewCount = Object.values(state.answers).filter(answer => answer.needs_review).length;
+  if (!hasRequiredPages()) return toast(`กรุณาสแกนให้ครบ ${requiredPageCount()} หน้า`);
+  if (!Object.keys(state.answerKey).length) return toast('ยังไม่มีเฉลยสำหรับรายวิชานี้');
   if (!state.validation.ok) return toast('ไม่สามารถบันทึกได้ เพราะไม่พบผู้เรียนหรือข้อมูลบนกระดาษไม่ตรง');
+  if (pendingReviewCount) return toast(`กรุณาแตะตรวจทานข้อสีส้มอีก ${pendingReviewCount} ข้อ`);
   const button = $('#saveBtn');
   button.disabled = true;
   button.textContent = 'กำลังบันทึกและส่งคะแนน…';
