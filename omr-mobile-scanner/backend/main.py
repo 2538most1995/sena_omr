@@ -102,7 +102,7 @@ PAPER_SUBJECT_CODE_OVERRIDES = {
     'สค0200038': 'สค02038',
 }
 
-app = FastAPI(title='Mobile OMR Scanner', version='1.1.0')
+app = FastAPI(title='Mobile OMR Scanner', version='1.2.0')
 
 
 def _append_scan_audit(result: dict[str, Any], image_data: bytes) -> str:

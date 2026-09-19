@@ -43,9 +43,7 @@ const savedConfig = readJson('omr-config', {
 });
 
 const state = {
-  side: 'front', stream: null, cameraReady: false, preflightReady: false,
-  preflightTimer: null, preflightBusy: false, preflightGeneration: 0, preflightPasses: 0,
-  fileBlob: null, front: null, back: null,
+  side: 'front', stream: null, cameraReady: false, fileBlob: null, front: null, back: null,
   answers: {}, answerKey: {}, config: savedConfig, subjects: [], groups: [], students: [],
   subjectSetups: loadSubjectSetups(), validation: { ok: false }, loadingSubjects: false,
   reportRows: [], reportSubjectCode: '', reportLoading: false, resolvedStudentCode: '',
@@ -170,100 +168,11 @@ function updateScanControls() {
   if (pages === 1 && state.side === 'back') setSide('front');
   $('#openCameraBtn').disabled = !ready;
   $('#fileInput').disabled = !ready;
-  $('#scanBtn').disabled = !(ready && state.fileBlob && state.preflightReady);
+  $('#scanBtn').disabled = !(ready && state.fileBlob);
   if (!state.fileBlob && !state.stream) {
     $('#qualityBadge').textContent = ready ? 'พร้อมถ่ายภาพ' : 'เลือกวิชาและบันทึกเฉลยก่อน';
     $('#qualityBadge').className = 'quality-badge';
   }
-}
-
-function showPreflight(result, live = false) {
-  if (live) {
-    state.preflightPasses = result.ready ? state.preflightPasses + 1 : 0;
-  } else {
-    state.preflightPasses = result.ready ? 2 : 0;
-  }
-  const stableReady = Boolean(result.ready) && (!live || state.preflightPasses >= 2);
-  const frame = $('#cameraFrame');
-  const badge = $('#qualityBadge');
-  const guide = $('.guide-label');
-  frame.classList.remove('preflight-ready', 'preflight-fail');
-  frame.classList.add(stableReady ? 'preflight-ready' : 'preflight-fail');
-  badge.className = `quality-badge ${stableReady ? 'good' : 'bad'}`;
-  badge.textContent = result.ready && !stableReady ? 'เกือบพร้อม • กำลังยืนยันภาพซ้ำ' : result.headline;
-  const instruction = stableReady
-    ? 'พร้อมตรวจ • ถือกล้องให้นิ่งแล้วกดถ่ายภาพ'
-    : result.ready ? 'ถือกล้องให้นิ่งอีกสักครู่ ระบบกำลังยืนยันความคมชัด'
-    : (result.guidance?.[0] || 'จัดกระดาษให้อยู่ในกรอบ');
-  guide.textContent = instruction;
-  const checkLabels = {
-    document: 'ขอบกระดาษ', registration_marks: 'จุดอ้างอิง', timing_marks: 'แถบเวลา',
-    answer_grid: 'ตารางคำตอบ', focus: 'โฟกัส', lighting: 'แสง',
-    correct_side: 'ด้านกระดาษ', metadata: 'ข้อมูลรหัส',
-  };
-  const panel = $('#preflightPanel');
-  panel.innerHTML = Object.entries(result.checks || {}).map(([key, passed]) => (
-    `<span class="${passed ? 'pass' : 'fail'}">${passed ? '✓' : '×'} ${checkLabels[key] || key}</span>`
-  )).join('');
-  panel.classList.add('visible');
-  state.preflightReady = stableReady;
-  if (live) $('#captureBtn').disabled = !state.preflightReady;
-  updateScanControls();
-}
-
-function showPreflightPending(message = 'กำลังตรวจความพร้อมของภาพ') {
-  state.preflightReady = false;
-  state.preflightPasses = 0;
-  $('#cameraFrame').classList.remove('preflight-ready', 'preflight-fail');
-  $('#qualityBadge').className = 'quality-badge';
-  $('#qualityBadge').textContent = message;
-  $('#preflightPanel').innerHTML = '<span class="pending">… กำลังตรวจ 8 จุดสำคัญ</span>';
-  $('#preflightPanel').classList.add('visible');
-  $('#captureBtn').disabled = true;
-  updateScanControls();
-}
-
-async function preflightBlob(blob, { live = false, generation = state.preflightGeneration } = {}) {
-  if (!blob || (live && state.preflightBusy)) return null;
-  state.preflightBusy = true;
-  try {
-    const body = new FormData();
-    body.append('image', blob, 'preflight.jpg');
-    const result = await apiFetch(`/api/preflight?side=${state.side}`, { method: 'POST', body });
-    if (generation !== state.preflightGeneration) return null;
-    showPreflight(result, live);
-    return result;
-  } catch (error) {
-    if (generation === state.preflightGeneration) {
-      showPreflight({ ready: false, headline: 'ตรวจความพร้อมไม่ได้', guidance: ['ตรวจการเชื่อมต่อ แล้วลองใหม่'] }, live);
-    }
-    return null;
-  } finally {
-    state.preflightBusy = false;
-  }
-}
-
-async function videoFrameBlob(video, maxDimension = 1920) {
-  if (!video.videoWidth || !video.videoHeight) return null;
-  const scale = Math.min(1, maxDimension / Math.max(video.videoWidth, video.videoHeight));
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.round(video.videoWidth * scale);
-  canvas.height = Math.round(video.videoHeight * scale);
-  canvas.getContext('2d', { alpha: false }).drawImage(video, 0, 0, canvas.width, canvas.height);
-  return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', .78));
-}
-
-function startLivePreflight() {
-  const generation = ++state.preflightGeneration;
-  const run = async () => {
-    if (!state.stream || generation !== state.preflightGeneration) return;
-    const blob = await videoFrameBlob($('#video'));
-    if (blob) await preflightBlob(blob, { live: true, generation });
-    if (state.stream && generation === state.preflightGeneration) {
-      state.preflightTimer = setTimeout(run, 1400);
-    }
-  };
-  state.preflightTimer = setTimeout(run, 450);
 }
 
 async function openCamera() {
@@ -311,10 +220,9 @@ async function openCamera() {
     $('#cameraFrame').classList.remove('has-preview');
     $('#openCameraBtn').classList.add('hidden');
     $('#captureBtn').classList.remove('hidden');
-    $('#captureBtn').disabled = true;
+    $('#captureBtn').disabled = false;
     $('#retakeBtn').classList.add('hidden');
-    showPreflightPending('กำลังตรวจขอบกระดาษและจุดอ้างอิง');
-    startLivePreflight();
+    $('#qualityBadge').textContent = 'พร้อมถ่าย • ระบบจะตรวจให้อัตโนมัติ';
   } catch (error) {
     stopCamera();
     const messages = {
@@ -329,11 +237,6 @@ async function openCamera() {
 }
 
 function stopCamera() {
-  state.preflightGeneration += 1;
-  if (state.preflightTimer) clearTimeout(state.preflightTimer);
-  state.preflightTimer = null;
-  state.preflightBusy = false;
-  state.preflightPasses = 0;
   if (state.stream) state.stream.getTracks().forEach(track => track.stop());
   state.stream = null;
   state.cameraReady = false;
@@ -348,9 +251,6 @@ async function capture() {
   if (!state.cameraReady || video.readyState < 2 || !video.videoWidth) {
     return toast('กล้องยังปรับภาพไม่เสร็จ กรุณารอสักครู่แล้วถ่ายใหม่');
   }
-  if (!state.preflightReady) {
-    return toast('ภาพยังไม่ผ่านการตรวจความพร้อม กรุณาปรับกล้องตามข้อความในกรอบสีแดง');
-  }
   $('#captureBtn').disabled = true;
   $('#qualityBadge').textContent = 'กำลังบันทึกภาพความละเอียดสูง';
   const canvas = $('#captureCanvas');
@@ -363,42 +263,38 @@ async function capture() {
     return toast('บันทึกภาพจากกล้องไม่สำเร็จ กรุณาลองใหม่');
   }
   stopCamera();
-  setPreviewBlob(blob);
+  setPreviewBlob(blob, true);
 }
 
 $('#captureBtn').onclick = capture;
 
-function setPreviewBlob(blob) {
+function setPreviewBlob(blob, autoScan = false) {
   state.fileBlob = blob;
-  state.preflightReady = false;
   $('#preview').src = URL.createObjectURL(blob);
   $('#cameraFrame').classList.remove('has-video');
   $('#cameraFrame').classList.add('has-preview');
   $('#captureBtn').classList.add('hidden');
   $('#openCameraBtn').classList.add('hidden');
   $('#retakeBtn').classList.remove('hidden');
-  showPreflightPending('กำลังตรวจภาพก่อนวิเคราะห์');
-  const generation = state.preflightGeneration;
-  preflightBlob(blob, { live: false, generation });
+  $('#qualityBadge').textContent = autoScan ? 'กำลังวิเคราะห์อัตโนมัติ' : 'พร้อมวิเคราะห์';
+  $('#qualityBadge').className = 'quality-badge good';
   updateScanControls();
+  if (autoScan) setTimeout(() => $('#scanBtn').click(), 0);
 }
 
 $('#fileInput').onchange = event => {
   const file = event.target.files?.[0];
-  if (file) setPreviewBlob(file);
+  if (file) setPreviewBlob(file, true);
 };
 
 function resetCapture() {
   stopCamera();
   state.fileBlob = null;
-  state.preflightReady = false;
-  $('#cameraFrame').classList.remove('has-video', 'has-preview', 'preflight-ready', 'preflight-fail');
+  $('#cameraFrame').classList.remove('has-video', 'has-preview');
   $('#openCameraBtn').classList.remove('hidden');
   $('#captureBtn').classList.add('hidden');
   $('#retakeBtn').classList.add('hidden');
   $('#qualityBadge').className = 'quality-badge';
-  $('#preflightPanel').classList.remove('visible');
-  $('#preflightPanel').innerHTML = '';
   $('.guide-label').textContent = 'วางกระดาษให้เต็มกรอบ • เห็นขอบกระดาษครบ 4 ด้าน';
   $('#fileInput').value = '';
   updateScanControls();

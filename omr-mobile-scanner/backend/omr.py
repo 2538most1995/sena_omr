@@ -706,9 +706,11 @@ def _read_question(
         dark_margin = float(darkness[j] - other_dark)
         classical = contrasts[j] >= 25.0 or (contrasts[j] >= 13.0 and dark_margin >= 18.0)
         adaptive = (
-            composite[j] >= adaptive_threshold
-            and features[j]['contrast'] >= 9.0
-            and features[j]['ink_lift'] >= 0.035
+            composite[j] >= adaptive_threshold + 6.0
+            and features[j]['contrast'] >= 15.0
+            and features[j]['pencil_contrast'] >= 12.0
+            and features[j]['ink_lift'] >= 0.08
+            and dark_margin >= 12.0
         )
         if classical or adaptive:
             valid.append(j)
@@ -739,10 +741,9 @@ def _read_question(
         status != 'multiple'
         and adaptive_threshold - 10.0 <= composite[top_idx] <= adaptive_threshold + 12.0
     )
-    if classifier_used and status == 'blank' and top_probability >= 0.82 and composite[top_idx] - composite[second_idx] >= 9.0:
-        status = 'ok'
-        choice = OPTIONS[top_idx]
-        confidence = min(0.78, top_probability)
+    # The secondary classifier never promotes a blank into an answer.  It may
+    # only request human review; this prevents shadows/print artefacts from
+    # becoming a confident but wrong choice.
 
     if status == 'multiple':
         needs_review = True
@@ -750,7 +751,7 @@ def _read_question(
     elif status == 'ok' and confidence < 0.62:
         needs_review = True
         review_reason = 'low_confidence'
-    elif status == 'blank' and (confidence < 0.55 or (classifier_used and top_probability >= 0.65)):
+    elif status == 'blank' and (confidence < 0.55 or (classifier_used and top_probability >= 0.72)):
         needs_review = True
         review_reason = 'possible_faint_mark'
     else:
@@ -768,6 +769,7 @@ def _read_question(
         'top1': {'choice': OPTIONS[top_idx], 'score': round(float(composite[top_idx]), 2)},
         'top2': {'choice': OPTIONS[second_idx], 'score': round(float(composite[second_idx]), 2)},
         'classifier_used': classifier_used,
+        'classifier_policy': 'review_only',
         'mark_probability': round(top_probability, 3),
         'features': {
             OPTIONS[i]: {key: round(float(value), 3) for key, value in features[i].items() if key != 'score'}
@@ -810,7 +812,7 @@ def read_answers(warped: np.ndarray, side: str, with_diagnostics: bool = False):
         'median': median,
         'mad': mad,
         'robust_scale': robust_scale,
-        'mark_threshold': max(24.0, median + 2.65 * robust_scale),
+        'mark_threshold': max(30.0, median + 3.25 * robust_scale),
         'p95': float(np.percentile(score_values, 95)),
     }
 
