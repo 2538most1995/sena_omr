@@ -6,7 +6,13 @@ from typing import Any, Literal
 from urllib.parse import quote
 
 import httpx
-import pymysql
+try:
+    import pymysql
+    import pymysql.cursors
+    MySQLError = pymysql.MySQLError
+except ImportError:
+    pymysql = None
+    MySQLError = Exception
 from fastapi import FastAPI, File, HTTPException, Path as ApiPath, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -123,7 +129,7 @@ def health():
                     cursor.fetchone()
             finally:
                 connection.close()
-        except (OSError, ValueError, pymysql.MySQLError) as exc:
+        except (OSError, ValueError, MySQLError) as exc:
             raise HTTPException(status_code=503, detail='OMR MySQL database is unavailable') from exc
     return {
         'ok': True,
@@ -393,7 +399,7 @@ def _sdl_mysql_configured() -> bool:
 
 
 def _mysql_connection():
-    if not _sdl_mysql_configured():
+    if not _sdl_mysql_configured() or pymysql is None:
         raise HTTPException(status_code=503, detail='SDL_school data source is not configured')
     try:
         return pymysql.connect(
@@ -408,7 +414,7 @@ def _mysql_connection():
             read_timeout=12,
             write_timeout=12,
         )
-    except (pymysql.MySQLError, ValueError) as exc:
+    except (MySQLError, ValueError) as exc:
         raise HTTPException(status_code=503, detail='Cannot connect to SDL_school database') from exc
 
 
@@ -486,7 +492,7 @@ def _mysql_subjects(term: str) -> list[dict[str, Any]]:
                             'school_code': os.getenv('SDL_SCHOOL_CODE', '').strip() or None,
                         })
         return list(subjects.values())
-    except pymysql.MySQLError as exc:
+    except MySQLError as exc:
         raise HTTPException(status_code=502, detail='Cannot read subjects from SDL_school') from exc
     finally:
         connection.close()
@@ -519,7 +525,7 @@ def _mysql_groups(subject_code: str, term: str) -> list[dict[str, Any]]:
                 )
                 groups.update(str(row['code']).strip() for row in cursor.fetchall() if row.get('code'))
         return [{'id': code, 'code': code, 'name': group_names.get(code, code)} for code in sorted(groups)]
-    except pymysql.MySQLError as exc:
+    except MySQLError as exc:
         raise HTTPException(status_code=502, detail='Cannot read class groups from SDL_school') from exc
     finally:
         connection.close()
@@ -555,7 +561,7 @@ def _mysql_group_students(group_id: str, subject_code: str, term: str) -> list[d
                     if code:
                         students[code] = {'code': code, 'name': str(row.get('name') or code).strip()}
         return sorted(students.values(), key=lambda item: item['code'])
-    except pymysql.MySQLError as exc:
+    except MySQLError as exc:
         raise HTTPException(status_code=502, detail='Cannot read group roster from SDL_school') from exc
     finally:
         connection.close()
@@ -565,7 +571,7 @@ def _local_scores(subject_code: str, term: str) -> dict[tuple[str, str], dict[st
     try:
         rows = storage.scores_for_subject(BASE, subject_code, term)
         return {(_paper_student_code(key[0]), key[1]): value for key, value in rows.items()}
-    except (OSError, ValueError, pymysql.MySQLError) as exc:
+    except (OSError, ValueError, MySQLError) as exc:
         if storage.mysql_configured():
             raise HTTPException(status_code=503, detail='Cannot read the OMR MySQL database') from exc
         return {}
@@ -642,7 +648,7 @@ def _mysql_subject_roster(
                         'group_id': current_group,
                         'group_name': group_names.get(current_group, current_group),
                     }
-    except pymysql.MySQLError as exc:
+    except MySQLError as exc:
         raise HTTPException(status_code=502, detail='Cannot read subject roster from SDL_school') from exc
     finally:
         connection.close()
@@ -699,7 +705,7 @@ async def _api_subject_roster(
 def _store_local_score(payload: dict[str, Any]) -> None:
     try:
         storage.store_score(BASE, payload)
-    except (OSError, ValueError, pymysql.MySQLError) as exc:
+    except (OSError, ValueError, MySQLError) as exc:
         raise HTTPException(status_code=503, detail='Cannot save to the OMR database') from exc
 
 
@@ -709,7 +715,7 @@ def _delete_local_score(student_code: str, subject_code: str, class_group_id: st
         return storage.delete_score(
             BASE, student_code, candidate_code, subject_code, class_group_id, term,
         )
-    except (OSError, ValueError, pymysql.MySQLError) as exc:
+    except (OSError, ValueError, MySQLError) as exc:
         if storage.mysql_configured():
             raise HTTPException(status_code=503, detail='Cannot update the OMR MySQL database') from exc
         return False
@@ -829,7 +835,7 @@ def _storage_error(exc: Exception) -> HTTPException:
 def answer_keys(term: str = Query('1/2569', pattern=r'^\d{1,2}/\d{4}$')):
     try:
         rows = storage.list_answer_keys(BASE, term)
-    except (OSError, ValueError, pymysql.MySQLError) as exc:
+    except (OSError, ValueError, MySQLError) as exc:
         raise _storage_error(exc) from exc
     return {
         'term': term,
@@ -846,7 +852,7 @@ def answer_key(
 ):
     try:
         row = storage.get_answer_key(BASE, subject_code, term)
-    except (OSError, ValueError, pymysql.MySQLError) as exc:
+    except (OSError, ValueError, MySQLError) as exc:
         raise _storage_error(exc) from exc
     if row is None:
         raise HTTPException(status_code=404, detail='Answer key was not found')
@@ -863,7 +869,7 @@ def save_answer_key(
     data = _validated_answer_key(payload)
     try:
         stored = storage.store_answer_key(BASE, data)
-    except (OSError, ValueError, pymysql.MySQLError) as exc:
+    except (OSError, ValueError, MySQLError) as exc:
         raise _storage_error(exc) from exc
     return {
         'ok': True,
@@ -879,7 +885,7 @@ def remove_answer_key(
 ):
     try:
         deleted = storage.delete_answer_key(BASE, subject_code, term)
-    except (OSError, ValueError, pymysql.MySQLError) as exc:
+    except (OSError, ValueError, MySQLError) as exc:
         raise _storage_error(exc) from exc
     return {'ok': True, 'deleted': deleted, 'subject_code': subject_code, 'term': term}
 

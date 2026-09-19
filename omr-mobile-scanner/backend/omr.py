@@ -8,7 +8,12 @@ from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
-from PIL import Image, ImageOps
+try:
+    from PIL import Image, ImageOps
+except ImportError:
+    Image = None
+    ImageOps = None
+
 
 
 def _preprocess_gray(gray: np.ndarray) -> np.ndarray:
@@ -708,16 +713,18 @@ def encode_jpeg_b64(img: np.ndarray, quality: int = 82) -> str:
 
 def _decode_mobile_image(data: bytes) -> np.ndarray:
     """Decode JPEG/HEIF-converted uploads and apply EXIF orientation."""
-    try:
-        with Image.open(io.BytesIO(data)) as source:
-            oriented = ImageOps.exif_transpose(source).convert('RGB')
-            return cv2.cvtColor(np.asarray(oriented), cv2.COLOR_RGB2BGR)
-    except Exception:
-        arr = np.frombuffer(data, np.uint8)
-        image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        if image is None:
-            raise ValueError('Invalid image')
-        return image
+    if Image is not None and ImageOps is not None:
+        try:
+            with Image.open(io.BytesIO(data)) as source:
+                oriented = ImageOps.exif_transpose(source).convert('RGB')
+                return cv2.cvtColor(np.asarray(oriented), cv2.COLOR_RGB2BGR)
+        except Exception:
+            pass
+    arr = np.frombuffer(data, np.uint8)
+    image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError('Invalid image')
+    return image
 
 
 def _capture_quality(image: np.ndarray, warped: np.ndarray, geom: Dict[str, float], grid_found: bool) -> Dict:

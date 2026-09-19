@@ -8,14 +8,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import pymysql
+try:
+    import pymysql
+    import pymysql.cursors
+except ImportError:
+    pymysql = None
 
 
 _SCHEMA_SIGNATURE: tuple[str, str, str] | None = None
 
 
 def mysql_configured() -> bool:
-    return bool(os.getenv('OMR_MYSQL_DATABASE', '').strip())
+    return bool(pymysql is not None and os.getenv('OMR_MYSQL_DATABASE', '').strip())
 
 
 def mysql_database_name() -> str:
@@ -26,6 +30,8 @@ def mysql_database_name() -> str:
 
 
 def mysql_connection(*, include_database: bool = True):
+    if pymysql is None:
+        raise RuntimeError('PyMySQL is not installed. Install it with: pip install pymysql')
     options: dict[str, Any] = {
         'host': os.getenv('OMR_MYSQL_HOST', os.getenv('SDL_MYSQL_HOST', '127.0.0.1')),
         'port': int(os.getenv('OMR_MYSQL_PORT', os.getenv('SDL_MYSQL_PORT', '3306'))),

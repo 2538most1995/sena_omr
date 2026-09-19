@@ -16,7 +16,7 @@ RewriteRule ^ - [R=404,L]
 
 # Keep the public application at /sena_omr while the source stays in its
 # existing omr-mobile-scanner directory.
-RewriteRule ^api/(.*)$ http://127.0.0.1:8000/api/$1 [P,L,QSA]
+RewriteRule ^api/(.*)$ http://127.0.0.1:18080/api/$1 [P,L,QSA]
 RewriteRule ^assets/(.*)$ omr-mobile-scanner/frontend/$1 [L]
 RewriteRule ^sw\.js$ omr-mobile-scanner/frontend/sw.js [L]
 RewriteRule ^$ omr-mobile-scanner/frontend/index.html [L]
