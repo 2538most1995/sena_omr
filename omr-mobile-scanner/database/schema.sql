@@ -42,3 +42,18 @@ CREATE TABLE IF NOT EXISTS omr_scores (
     KEY idx_omr_scores_group (class_group_id),
     KEY idx_omr_scores_checked_at (checked_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS omr_scan_audit (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    scan_id CHAR(32) NOT NULL,
+    image_sha256_prefix CHAR(16) NOT NULL,
+    side ENUM('front', 'back') NOT NULL,
+    quality_gate VARCHAR(20) NOT NULL,
+    issues_json LONGTEXT NOT NULL,
+    audit_json LONGTEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_omr_scan_audit_scan_id (scan_id),
+    KEY idx_omr_scan_audit_created_at (created_at),
+    KEY idx_omr_scan_audit_quality_gate (quality_gate)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

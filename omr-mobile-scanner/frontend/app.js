@@ -43,7 +43,7 @@ const savedConfig = readJson('omr-config', {
 });
 
 const state = {
-  side: 'front', stream: null, fileBlob: null, front: null, back: null,
+  side: 'front', stream: null, cameraReady: false, fileBlob: null, front: null, back: null,
   answers: {}, answerKey: {}, config: savedConfig, subjects: [], groups: [], students: [],
   subjectSetups: loadSubjectSetups(), validation: { ok: false }, loadingSubjects: false,
   reportRows: [], reportSubjectCode: '', reportLoading: false, resolvedStudentCode: '',
@@ -177,39 +177,91 @@ function updateScanControls() {
 
 async function openCamera() {
   if (!hasScanSetup()) return toast('กรุณาเลือกวิชาและบันทึกเฉลยก่อน');
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    return toast('เบราว์เซอร์นี้เปิดกล้องไม่ได้ กรุณาใช้ HTTPS หรือเลือกรูปจากเครื่อง');
+  }
   try {
     stopCamera();
-    state.stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1920 } },
-      audio: false,
+    $('#qualityBadge').textContent = 'กำลังเปิดและปรับโฟกัสกล้อง';
+    const attempts = [
+      { facingMode: { exact: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } },
+      { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1920 } },
+      { facingMode: { ideal: 'environment' } },
+      true,
+    ];
+    let lastError;
+    for (const videoConstraints of attempts) {
+      try {
+        state.stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
+        break;
+      } catch (error) { lastError = error; }
+    }
+    if (!state.stream) throw lastError || new Error('Camera unavailable');
+
+    const video = $('#video');
+    video.srcObject = state.stream;
+    const track = state.stream.getVideoTracks()[0];
+    const capabilities = track?.getCapabilities?.() || {};
+    const advanced = {};
+    if (capabilities.focusMode?.includes('continuous')) advanced.focusMode = 'continuous';
+    if (capabilities.exposureMode?.includes('continuous')) advanced.exposureMode = 'continuous';
+    if (capabilities.whiteBalanceMode?.includes('continuous')) advanced.whiteBalanceMode = 'continuous';
+    if (Object.keys(advanced).length) await track.applyConstraints({ advanced: [advanced] }).catch(() => {});
+
+    await new Promise((resolve, reject) => {
+      if (video.readyState >= 2 && video.videoWidth) return resolve();
+      const timer = setTimeout(() => reject(new Error('Camera start timeout')), 8000);
+      video.addEventListener('loadedmetadata', () => { clearTimeout(timer); resolve(); }, { once: true });
+      video.addEventListener('error', () => { clearTimeout(timer); reject(new Error('Camera video error')); }, { once: true });
     });
-    $('#video').srcObject = state.stream;
+    await video.play();
+    state.cameraReady = true;
     $('#cameraFrame').classList.add('has-video');
     $('#cameraFrame').classList.remove('has-preview');
     $('#openCameraBtn').classList.add('hidden');
     $('#captureBtn').classList.remove('hidden');
+    $('#captureBtn').disabled = false;
     $('#retakeBtn').classList.add('hidden');
     $('#qualityBadge').textContent = 'จัดกระดาษในกรอบ';
-  } catch {
-    toast('เปิดกล้องไม่ได้ กรุณาอนุญาตสิทธิ์กล้องหรือเลือกรูปจากเครื่อง');
+  } catch (error) {
+    stopCamera();
+    const messages = {
+      NotAllowedError: 'ยังไม่ได้อนุญาตใช้กล้อง กรุณาเปิดสิทธิ์กล้องในเบราว์เซอร์',
+      NotFoundError: 'ไม่พบกล้องบนอุปกรณ์นี้',
+      NotReadableError: 'กล้องกำลังถูกแอปอื่นใช้งาน กรุณาปิดแอปนั้นแล้วลองใหม่',
+      OverconstrainedError: 'กล้องไม่รองรับค่าที่ขอ กรุณาลองใหม่หรือเลือกรูปจากเครื่อง',
+      SecurityError: 'ต้องเปิดเว็บไซต์ผ่าน HTTPS จึงจะใช้กล้องได้',
+    };
+    toast(messages[error?.name] || 'เปิดกล้องไม่ได้ กรุณาลองใหม่หรือเลือกรูปจากเครื่อง');
   }
 }
 
 function stopCamera() {
   if (state.stream) state.stream.getTracks().forEach(track => track.stop());
   state.stream = null;
+  state.cameraReady = false;
+  const video = $('#video');
+  if (video) video.srcObject = null;
 }
 
 $('#openCameraBtn').onclick = openCamera;
 
 async function capture() {
   const video = $('#video');
-  if (!video.videoWidth) return;
+  if (!state.cameraReady || video.readyState < 2 || !video.videoWidth) {
+    return toast('กล้องยังปรับภาพไม่เสร็จ กรุณารอสักครู่แล้วถ่ายใหม่');
+  }
+  $('#captureBtn').disabled = true;
+  $('#qualityBadge').textContent = 'กำลังบันทึกภาพความละเอียดสูง';
   const canvas = $('#captureCanvas');
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
   canvas.getContext('2d').drawImage(video, 0, 0);
-  const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', .9));
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', .94));
+  if (!blob) {
+    $('#captureBtn').disabled = false;
+    return toast('บันทึกภาพจากกล้องไม่สำเร็จ กรุณาลองใหม่');
+  }
   setPreviewBlob(blob);
   stopCamera();
 }
@@ -364,7 +416,9 @@ function renderResults(data) {
   }
   if (metadata.school_code) $('#schoolCode').textContent = metadata.school_code.value || 'อ่านไม่พบ';
   if (metadata.subject_code) $('#paperSubjectCode').textContent = metadata.subject_code.value || 'อ่านไม่พบ';
-  $('#quadStatus').textContent = data.quality.quad_found ? 'พบขอบกระดาษ' : 'โหมดสำรอง';
+  $('#quadStatus').textContent = data.quality.quad_found && data.quality.timing_confidence >= .55
+    ? `จัดแนวแล้ว • timing ${data.quality.timing_bar_count || 0} จุด`
+    : data.quality.quad_found ? 'พบขอบ • timing ไม่ครบ' : 'ไม่พบขอบกระดาษ';
   $('#avgConfidence').textContent = Math.round((data.quality.average_confidence || 0) * 100) + '%';
   const uncertain = Object.values(state.answers).filter(answer => answer.needs_review).length;
   $('#uncertainCount').textContent = uncertain;
@@ -376,11 +430,13 @@ function renderResults(data) {
     low_resolution: 'ภาพเล็กเกินไป', document_edges_missing: 'ไม่พบขอบกระดาษ',
     excessive_perspective: 'มุมเอียงมากเกินไป', image_blur: 'ภาพไม่คมชัด',
     too_dark: 'ภาพมืดเกินไป', too_bright: 'ภาพสว่างเกินไป', glare: 'มีแสงสะท้อน',
+    shadow_clipping: 'เงาดำบังแบบฟอร์ม', uneven_lighting: 'แสงไม่สม่ำเสมอ',
+    timing_marks_missing: 'ไม่พบ timing marks ครบ', registration_marks_missing: 'ไม่พบ registration marks',
+    side_mismatch: 'ถ่ายกระดาษผิดด้าน',
     answer_grid_fallback: 'ใช้ตำแหน่งสำรอง', low_read_confidence: 'ความเชื่อมั่นต่ำ',
     metadata_unreliable: 'รหัสบนกระดาษอ่านไม่ครบ',
   };
-  const blockingIssues = (data.quality.issues || [])
-    .filter(issue => issue !== 'metadata_unreliable' && issue !== 'answer_grid_fallback');
+  const blockingIssues = (data.quality.issues || []);
   $('#qualityBadge').textContent = blockingIssues.length
     ? issueLabels[blockingIssues[0]] || 'ควรถ่ายใหม่' : 'ตรวจจับสำเร็จ';
   $('#qualityBadge').className = 'quality-badge ' + (data.quality.capture_ok ? 'good' : 'bad');
@@ -778,7 +834,10 @@ function buildHistoryItem() {
     uncertain: Object.values(state.answers).filter(answer => answer.needs_review).length,
     blank: Object.values(state.answers).filter(answer => answer.status === 'blank').length,
     answers: Object.fromEntries(Object.entries(state.answers).map(([question, answer]) => [question, answer.choice])),
-    scanQuality: { front: state.front?.quality || {}, back: state.back?.quality || {} },
+    scanQuality: {
+      front: { quality: state.front?.quality || {}, audit: state.front?.audit || {} },
+      back: { quality: state.back?.quality || {}, audit: state.back?.audit || {} },
+    },
     reviewCount: (state.front?.quality?.needs_review || 0) + (state.back?.quality?.needs_review || 0),
     correctedCount: Object.values(state.answers).filter(answer => answer.manual).length,
     syncStatus: 'pending', syncError: '',

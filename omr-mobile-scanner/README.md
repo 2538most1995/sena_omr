@@ -5,6 +5,10 @@
 ## ความสามารถ
 - ใช้กล้องหลังของมือถือผ่านเว็บ หรือเลือกรูปจากเครื่อง
 - ปรับ perspective ของกระดาษเป็นแม่แบบ 1600×1200 อัตโนมัติ
+- ตรวจ registration marks และ timing marks เพื่อยืนยันด้าน/แนวกระดาษ พร้อม local mesh correction รายวงกลม
+- ใช้ OMR แบบหลายคุณลักษณะ (ไม่ใช้ OCR อ่านคำตอบ), adaptive threshold, local illumination normalization และ per-sheet normalization
+- มี Top1/Top2 confidence, ตรวจระบายซ้ำ/รอยก้ำกึ่ง และใช้ตัวจำแนกเฉพาะช่วงก้ำกึ่ง
+- มี Quality Gate บล็อกภาพเบลอ แสงสะท้อน เงาหนัก ผิดด้าน หรือจับตำแหน่งไม่ครบก่อนคิดคะแนน
 - อ่านคำตอบ 1-50 (หน้า) และอ่าน 51-100 (หลัง) เฉพาะวิชาที่มีเฉลยเกินข้อ 50
 - ตรวจสถานะ `ok / blank / multiple` และ confidence
 - อ่านรหัสผู้เข้าสอบ 10 หลักจากด้านหน้า
@@ -28,10 +32,11 @@
 
 ## ฐานข้อมูล MySQL หลังบ้าน
 
-ระบบใช้ฐาน `sena_omr` และมีตารางหลัก 2 ตาราง:
+ระบบใช้ฐาน `sena_omr` และมีตารางหลัก 3 ตาราง:
 
 - `omr_answer_keys` เก็บเฉลย รหัสวิชาบนกระดาษ รหัสสถานศึกษา ภาคเรียน และเลขเวอร์ชัน
 - `omr_scores` เก็บคะแนน คำตอบที่อ่านได้ คุณภาพภาพ จำนวนข้อที่แก้ และเวลาตรวจ
+- `omr_scan_audit` เก็บ scan ID, quality gate, ปัญหาที่พบ และ pipeline audit โดยไม่เก็บภาพหรือรหัสนักศึกษา
 
 ตั้งค่า `OMR_MYSQL_*` ใน `.env` แล้วสร้างฐานและตารางด้วยคำสั่ง:
 
@@ -65,6 +70,10 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 จากนั้นเปิด `http://localhost:8000`
 
 > กล้องผ่าน `getUserMedia` บนมือถือจริงควรเปิดผ่าน HTTPS (ยกเว้น localhost)
+
+ไฟล์ JPEG/HEIC จากมือถือสมัยใหม่ผ่าน lens correction ของอุปกรณ์อยู่แล้ว หากใช้กล้อง
+kiosk ที่ผ่านการ calibration สามารถกำหนด `OMR_LENS_COEFFICIENTS=k1,k2,p1,p2,k3`
+และ `OMR_CAMERA_FOCAL_RATIO` ใน `.env` เพื่อให้ OpenCV แก้ lens distortion ก่อนหาเอกสาร
 
 ## ทดสอบบน macOS ด้วย MAMP
 

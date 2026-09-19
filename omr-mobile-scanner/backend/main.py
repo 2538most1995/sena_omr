@@ -1,5 +1,8 @@
+import hashlib
+import json
 import os
 import re
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -99,7 +102,39 @@ PAPER_SUBJECT_CODE_OVERRIDES = {
     'สค0200038': 'สค02038',
 }
 
-app = FastAPI(title='Mobile OMR Scanner', version='0.5.0')
+app = FastAPI(title='Mobile OMR Scanner', version='1.0.0')
+
+
+def _append_scan_audit(result: dict[str, Any], image_data: bytes) -> str:
+    """Append a privacy-conscious scanner audit record.
+
+    The image and candidate ID are intentionally not logged.  The SHA-256
+    prefix allows an operator to correlate retries of the same capture.
+    """
+    scan_id = uuid.uuid4().hex
+    record = {
+        'scan_id': scan_id,
+        'created_at': datetime.now().astimezone().isoformat(timespec='seconds'),
+        'image_sha256_prefix': hashlib.sha256(image_data).hexdigest()[:16],
+        'side': result.get('side'),
+        'quality': result.get('quality', {}),
+        'pipeline': result.get('audit', {}),
+    }
+    try:
+        audit_dir = BASE / '.run'
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        with (audit_dir / 'scan-audit.jsonl').open('a', encoding='utf-8') as stream:
+            stream.write(json.dumps(record, ensure_ascii=False, separators=(',', ':')) + '\n')
+    except OSError:
+        # Scanning must remain available on read-only deployments; the API
+        # response still carries the complete audit object.
+        pass
+    try:
+        storage.store_scan_audit(BASE, record)
+    except Exception:
+        # Local JSONL remains the last-resort audit sink.
+        pass
+    return scan_id
 
 # The normal MAMP/production setup is same-origin and does not need CORS.
 # Explicitly opt in only when a separate frontend origin is required.
@@ -1133,7 +1168,10 @@ async def scan(
             (BASE / 'output' / 'last_scan.jpg').write_bytes(data)
         except Exception:
             pass
-        return scan_image_bytes(data, side)
+        result = scan_image_bytes(data, side)
+        result['scan_id'] = _append_scan_audit(result, data)
+        result['audit']['scan_id'] = result['scan_id']
+        return result
     except HTTPException:
         raise
     except Exception as e:

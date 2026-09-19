@@ -125,6 +125,17 @@ def _ensure_sqlite(connection: sqlite3.Connection) -> None:
             PRIMARY KEY (subject_code, term)
         )'''
     )
+    connection.execute(
+        '''CREATE TABLE IF NOT EXISTS scan_audit (
+            scan_id TEXT NOT NULL PRIMARY KEY,
+            image_sha256_prefix TEXT NOT NULL,
+            side TEXT NOT NULL,
+            quality_gate TEXT NOT NULL,
+            issues_json TEXT NOT NULL,
+            audit_json TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )'''
+    )
     columns = {row[1] for row in connection.execute('PRAGMA table_info(scores)').fetchall()}
     additions = {
         'scan_quality_json': 'TEXT',
@@ -245,6 +256,47 @@ def store_score(base: Path, payload: dict[str, Any]) -> None:
                      scan_quality_json=excluded.scan_quality_json, review_count=excluded.review_count,
                      corrected_count=excluded.corrected_count, checked_at=excluded.checked_at,
                      updated_at=CURRENT_TIMESTAMP''',
+                values,
+            )
+
+
+def store_scan_audit(base: Path, record: dict[str, Any]) -> None:
+    """Persist a scan attempt without storing the photo or student identity."""
+    values = (
+        record['scan_id'], record['image_sha256_prefix'], record['side'],
+        record['quality'].get('quality_gate', 'unknown'),
+        json.dumps(record['quality'].get('issues', []), ensure_ascii=False, separators=(',', ':')),
+        json.dumps(record.get('pipeline', {}), ensure_ascii=False, separators=(',', ':')),
+    )
+    saved_to_mysql = False
+    if mysql_configured():
+        try:
+            ensure_mysql(base)
+            connection = mysql_connection()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        '''INSERT INTO omr_scan_audit
+                           (scan_id, image_sha256_prefix, side, quality_gate, issues_json, audit_json)
+                           VALUES (%s, %s, %s, %s, %s, %s)''',
+                        values,
+                    )
+                connection.commit()
+                saved_to_mysql = True
+            finally:
+                connection.close()
+        except Exception:
+            saved_to_mysql = False
+
+    if not saved_to_mysql:
+        path = _sqlite_path(base)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(path) as connection:
+            _ensure_sqlite(connection)
+            connection.execute(
+                '''INSERT OR REPLACE INTO scan_audit
+                   (scan_id, image_sha256_prefix, side, quality_gate, issues_json, audit_json)
+                   VALUES (?, ?, ?, ?, ?, ?)''',
                 values,
             )
 
