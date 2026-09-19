@@ -9,6 +9,7 @@
 - ใช้ OMR แบบหลายคุณลักษณะ (ไม่ใช้ OCR อ่านคำตอบ), adaptive threshold, local illumination normalization และ per-sheet normalization
 - มี Top1/Top2 confidence, ตรวจระบายซ้ำ/รอยก้ำกึ่ง และใช้ตัวจำแนกเฉพาะช่วงก้ำกึ่ง
 - มี Quality Gate บล็อกภาพเบลอ แสงสะท้อน เงาหนัก ผิดด้าน หรือจับตำแหน่งไม่ครบก่อนคิดคะแนน
+- มี Live Preflight ก่อนถ่าย: กรอบเขียวเมื่ออ่านขอบ/จุดอ้างอิง/แถบเวลา/ตาราง/รหัสได้ครบ และกรอบแดงพร้อมคำแนะนำเมื่อยังไม่พร้อม
 - อ่านคำตอบ 1-50 (หน้า) และอ่าน 51-100 (หลัง) เฉพาะวิชาที่มีเฉลยเกินข้อ 50
 - ตรวจสถานะ `ok / blank / multiple` และ confidence
 - อ่านรหัสผู้เข้าสอบ 10 หลักจากด้านหน้า
@@ -131,6 +132,7 @@ GET  /api/reports/students?term=1%2F2569&subject_code={subject_code}
 GET  /api/answer-keys?term=1%2F2569
 PUT  /api/answer-keys/{subject_code}
 DELETE /api/answer-keys/{subject_code}?term=1%2F2569
+POST /api/preflight?side=front|back
 POST /api/scores
 ```
 

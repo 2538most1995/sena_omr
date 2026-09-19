@@ -102,7 +102,7 @@ PAPER_SUBJECT_CODE_OVERRIDES = {
     'สค0200038': 'สค02038',
 }
 
-app = FastAPI(title='Mobile OMR Scanner', version='1.0.0')
+app = FastAPI(title='Mobile OMR Scanner', version='1.1.0')
 
 
 def _append_scan_audit(result: dict[str, Any], image_data: bytes) -> str:
@@ -1152,6 +1152,87 @@ async def cancel_score(
         'class_group_id': class_group_id,
         'term': term,
     }
+
+
+PREFLIGHT_GUIDANCE = {
+    'low_resolution': 'ขยับกล้องเข้าใกล้อีกเล็กน้อย หรือเลือกความละเอียดกล้องที่สูงขึ้น',
+    'document_edges_missing': 'ขยับกล้องออกจนเห็นขอบกระดาษครบทั้ง 4 ด้าน',
+    'excessive_perspective': 'ถือโทรศัพท์ให้ขนานกับกระดาษ ลดการเอียงซ้าย-ขวา',
+    'image_blur': 'ถือกล้องให้นิ่ง เช็ดเลนส์ แล้วแตะหน้าจอเพื่อโฟกัส',
+    'too_dark': 'เพิ่มแสงสว่างให้ทั่วกระดาษและหลีกเลี่ยงเงามือ',
+    'too_bright': 'ลดแสงหรือขยับออกจากหลอดไฟที่ส่องตรงกระดาษ',
+    'glare': 'เอียงแหล่งกำเนิดแสงหรือปิดแฟลชเพื่อลดแสงสะท้อน',
+    'shadow_clipping': 'ย้ายมือหรือโทรศัพท์ไม่ให้เกิดเงาดำบนกระดาษ',
+    'uneven_lighting': 'จัดแสงให้สม่ำเสมอทั้งแผ่น',
+    'timing_marks_missing': 'จัดให้เห็นแถบดำด้านล่างครบตลอดแนวกระดาษ',
+    'registration_marks_missing': 'จัดให้เห็นจุดสี่เหลี่ยมอ้างอิงบริเวณขอบกระดาษ',
+    'side_mismatch': 'กลับกระดาษหรือเลือกปุ่มด้านหน้า/ด้านหลังให้ตรงกับภาพ',
+    'answer_grid_fallback': 'กางกระดาษให้เรียบและจัดตารางคำตอบให้อยู่เต็มกรอบ',
+    'low_read_confidence': 'ขยับเข้าใกล้และรอให้กล้องโฟกัสจนตัวพิมพ์และวงกลมคมชัด',
+    'metadata_unreliable': 'จัดช่องรหัสผู้สอบและรหัสวิชาให้คมชัด ไม่มีเงาหรือแสงสะท้อน',
+    'ambiguous_marks': 'พบคำตอบระบายซ้ำหรือก้ำกึ่ง กรุณาตรวจและแก้รอยระบายบนกระดาษ',
+}
+
+
+def _preflight_response(result: dict[str, Any], side: str) -> dict[str, Any]:
+    quality = result.get('quality', {})
+    issues = list(dict.fromkeys(quality.get('issues', [])))
+    if quality.get('needs_review', 0) or quality.get('multiple_answers', 0):
+        issues.append('ambiguous_marks')
+    ready = bool(quality.get('capture_ok')) and 'ambiguous_marks' not in issues
+    metadata = result.get('metadata', {})
+    metadata_complete = side == 'back' or all(
+        metadata.get(key, {}).get('complete')
+        for key in ('candidate_id', 'school_code', 'subject_code')
+    )
+    checks = {
+        'document': bool(quality.get('quad_found')),
+        'registration_marks': quality.get('registration_confidence', 0) >= 0.5,
+        'timing_marks': quality.get('timing_confidence', 0) >= 0.55,
+        'answer_grid': bool(quality.get('answer_grid_detected')),
+        'focus': quality.get('sharpness', 0) >= 70,
+        'lighting': not any(issue in issues for issue in ('too_dark', 'too_bright', 'glare', 'shadow_clipping')),
+        'correct_side': 'side_mismatch' not in issues,
+        'metadata': metadata_complete,
+    }
+    ready = ready and all(checks.values())
+    guidance = [PREFLIGHT_GUIDANCE[issue] for issue in issues if issue in PREFLIGHT_GUIDANCE]
+    return {
+        'ready': ready,
+        'frame_color': 'green' if ready else 'red',
+        'headline': 'พร้อมตรวจ อ่านตำแหน่งสำคัญได้ครบ' if ready else 'ยังไม่พร้อม กรุณาปรับกล้อง',
+        'guidance': guidance[:3] or (['จัดกระดาษให้อยู่ในกรอบและรอระบบตรวจสอบ'] if not ready else []),
+        'checks': checks,
+        'quality': {
+            key: quality.get(key)
+            for key in (
+                'quality_score', 'sharpness', 'brightness', 'geometry_confidence',
+                'timing_bar_count', 'timing_confidence', 'registration_confidence',
+                'detected_side', 'answer_grid_detected', 'needs_review',
+            )
+        },
+    }
+
+
+@app.post('/api/preflight')
+async def preflight(
+    side: Literal['front', 'back'] = Query(...),
+    image: UploadFile = File(...),
+):
+    """Check a live camera frame before the user is allowed to capture/scan."""
+    try:
+        data = await image.read()
+        if not data:
+            raise HTTPException(status_code=400, detail='Empty image')
+        if len(data) > 12 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail='Image too large')
+        result = scan_image_bytes(data, side, include_debug=False)
+        return _preflight_response(result, side)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
 
 @app.post('/api/scan')
 async def scan(

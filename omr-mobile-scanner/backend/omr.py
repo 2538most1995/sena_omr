@@ -1102,7 +1102,11 @@ def _capture_quality(
     if fiducials.get('registration_confidence', 0.0) < 0.5:
         issues.append('registration_marks_missing')
     detected_side = fiducials.get('detected_side', 'unknown')
-    if detected_side != 'unknown' and detected_side != requested_side:
+    side_evidence_reliable = (
+        fiducials.get('registration_confidence', 0.0) >= 0.5
+        and fiducials.get('timing_confidence', 0.0) >= 0.55
+    )
+    if side_evidence_reliable and detected_side != 'unknown' and detected_side != requested_side:
         issues.append('side_mismatch')
     if not grid_found:
         issues.append('answer_grid_fallback')
@@ -1143,7 +1147,7 @@ def _capture_quality(
     }
 
 
-def scan_image_bytes(data: bytes, side: str) -> Dict:
+def scan_image_bytes(data: bytes, side: str, include_debug: bool = True) -> Dict:
     started = time.perf_counter()
     img = _decode_mobile_image(data)
     decoded_at = time.perf_counter()
@@ -1154,7 +1158,7 @@ def scan_image_bytes(data: bytes, side: str) -> Dict:
     grid_found = read_diagnostics['grid_source'] == 'detected'
     answers_at = time.perf_counter()
     meta = read_metadata(warped, side)
-    debug = make_debug_overlay(warped, side, answers)
+    debug = make_debug_overlay(warped, side, answers) if include_debug else None
     finished = time.perf_counter()
     answered = sum(1 for a in answers if a['status'] == 'ok')
     blank = sum(1 for a in answers if a['status'] == 'blank')
@@ -1175,12 +1179,15 @@ def scan_image_bytes(data: bytes, side: str) -> Dict:
     if average_confidence < 0.78:
         quality['issues'].append('low_read_confidence')
         quality['capture_ok'] = False
+        quality['quality_gate'] = 'blocked'
     if side == 'front':
         identity_reliable = (
             meta.get('candidate_id', {}).get('complete')
             and meta.get('candidate_id', {}).get('confidence', 0) >= 0.55
             and meta.get('subject_code', {}).get('complete')
             and meta.get('subject_code', {}).get('confidence', 0) >= 0.55
+            and meta.get('school_code', {}).get('complete')
+            and meta.get('school_code', {}).get('confidence', 0) >= 0.55
         )
         if not identity_reliable:
             quality['issues'].append('metadata_unreliable')
@@ -1215,11 +1222,13 @@ def scan_image_bytes(data: bytes, side: str) -> Dict:
             'total': round((finished - started) * 1000.0, 1),
         },
     }
-    return {
+    result = {
         'side': side,
         'answers': answers,
         'metadata': meta,
         'quality': quality,
         'audit': audit,
-        'debug_image_base64': encode_jpeg_b64(debug),
     }
+    if debug is not None:
+        result['debug_image_base64'] = encode_jpeg_b64(debug)
+    return result
