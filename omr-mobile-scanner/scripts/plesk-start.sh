@@ -15,9 +15,9 @@ RUNTIME_LIBS_DIR="$PROJECT_DIR/runtime-libs"
 mkdir -p "$RUN_DIR"
 export LD_LIBRARY_PATH="$RUNTIME_LIBS_DIR:/usr/lib:/usr/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-if [[ ! -x "$VENV_DIR/bin/uvicorn" ]]; then
-  echo "Runtime is missing. Run scripts/plesk-bootstrap.sh first." >&2
-  exit 1
+if [[ ! -x "$VENV_DIR/bin/python" ]] || [[ ! -x "$VENV_DIR/bin/uvicorn" ]] || ! "$VENV_DIR/bin/python" -c "import sys" >/dev/null 2>&1; then
+  echo "Runtime is missing or incomplete. Running plesk-bootstrap.sh..."
+  bash "$PROJECT_DIR/scripts/plesk-bootstrap.sh"
 fi
 
 if [[ "${1:-}" == "--restart" ]] || [[ "${1:-}" == "restart" ]] || [[ "${1:-}" == "-r" ]]; then
